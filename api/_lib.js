@@ -18,15 +18,12 @@ function sameSecret(a, b) {
   return timingSafeEqual(ha, hb);
 }
 
-// Every route is behind APP_PASSWORD. If it is not set, the API refuses to
-// run (fails closed) instead of exposing the paid-API workflow.
+// APP_PASSWORD is optional. When it's set, every route needs it. When it's
+// not set, the app is open to anyone with the link (the owner's choice); the
+// n8n webhook secret still keeps n8n itself from being called directly.
 export function requireAuth(req, res) {
   const expected = process.env.APP_PASSWORD;
-  if (MOCK && !expected) return true;
-  if (!expected) {
-    send(res, 500, { error: 'APP_PASSWORD is not set in the Vercel project settings.' });
-    return false;
-  }
+  if (!expected) return true;
   const given = req.headers['x-app-password'] || '';
   if (!given || !sameSecret(given, expected)) {
     send(res, 401, { error: 'Wrong or missing password.' });

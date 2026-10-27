@@ -95,11 +95,11 @@ You need: an n8n instance (n8n Cloud or self-hosted, reachable over HTTPS), and 
 
    | Variable | Value |
    |---|---|
-   | `APP_PASSWORD` | The password people will type to use the app |
+   | `APP_PASSWORD` | *Optional.* If set, people must type it to use the app. If not set, anyone with the link can run audits on your API credits. |
    | `N8N_BASE_URL` | e.g. `https://yourname.app.n8n.cloud` (no trailing slash) |
    | `N8N_WEBHOOK_SECRET` | The same random string as the n8n webhook credential |
 
-3. Deploy. Open the site; the header shows "n8n connected" when all three are set, or lists what's missing.
+3. Deploy. Open the site; the header shows "n8n connected" when the two n8n settings are set, or lists what's missing.
 4. Put the deployed URL into `APP_URL` in the audit pipeline's Config node, so the review emails link to the report.
 
 ### 4. First run
@@ -132,7 +132,7 @@ Targets shown in the app: an average total gap within 5 points, and pass/fail ag
 
 ## Costs
 
-Every audit makes up to 3 Groq calls (fewer when there are no checkable claims or no competitor pages), 1 SerpAPI search per claim (up to 8) plus 1 for the keyword, 1 Copyscape full-comparison search, and fetches up to 8 competitor pages. Check current pricing with each provider; Copyscape charges per search and full comparisons cost more than a basic search. The app password and the webhook secret stop strangers from spending your credits.
+Every audit makes up to 3 Groq calls (fewer when there are no checkable claims or no competitor pages), 1 SerpAPI search per claim (up to 8) plus 1 for the keyword, 1 Copyscape full-comparison search, and fetches up to 8 competitor pages. Check current pricing with each provider; Copyscape charges per search and full comparisons cost more than a basic search. The webhook secret stops anyone calling n8n directly. Without `APP_PASSWORD`, anyone who has the site link can still run audits through the site, so set one if the link might be shared.
 
 ## Local preview and development
 
