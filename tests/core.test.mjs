@@ -8,7 +8,7 @@ const lib = loadSources(
   [
     'tokenizeWords', 'splitSentences', 'countPhrase', 'ariGrade', 'analyzeReadability', 'countPassive', 'findAdverbs',
     'parseHtml', 'parsePasted', 'analyzeKeywords', 'densityPoints', 'extractJson', 'normalizeAnalysis',
-    'normalizeVerification', 'normalizeGap', 'buildReport', 'resultsRow', 'compactReportJson', 'RESULTS_COLUMNS',
+    'normalizeVerification', 'normalizeGap', 'buildReport', 'buildErrorReport',
     'normalizeInput', 'parseCopyscape', 'competitorUrls', 'rowsToObjects', 'plagiarismPoints',
   ]
 );
@@ -210,12 +210,12 @@ test('a failed plagiarism check sends the article to review', () => {
   assert.equal(r.parameters.plagiarism.score, 0);
 });
 
-test('results row matches the column list and fits a Sheets cell', () => {
-  const r = lib.buildReport(sampleCtx());
-  const row = lib.resultsRow(r);
-  assert.equal(row.length, lib.RESULTS_COLUMNS.length);
-  assert.ok(row[row.length - 1].length <= 45000);
-  JSON.parse(row[row.length - 1]);
+test('error report has no scores and keeps the reason', () => {
+  const r = lib.buildErrorReport({ audit_id: 'aud_x', created_at: 't', input: { url: 'https://a.com', keyword: 'k', secondary: [] }, error: 'blocked', config: {} });
+  assert.equal(r.status, 'error');
+  assert.equal(r.parameters, null);
+  assert.equal(r.total, null);
+  assert.deepEqual(r.review_reasons, ['blocked']);
 });
 
 test('rowsToObjects keeps sheet row numbers', () => {
@@ -261,7 +261,7 @@ test('Groq failures become plain-language reasons', () => {
   assert.equal(llm.llmFailure({ choices: [{ message: { content: '{"a":1}' } }] }), null);
   assert.match(llm.llmFailure({ error: { message: 'Request failed with status code 429' } }), /rate limit/);
   assert.match(llm.llmFailure({ error: { message: '413 Request too large for model' } }), /MAX_PROMPT_CHARS/);
-  assert.match(llm.llmFailure({ error: { message: '401 Invalid API Key' } }), /credential/);
+  assert.match(llm.llmFailure({ error: { message: '401 Invalid API Key' } }), /GROQ_API_KEY/);
   assert.match(llm.llmFailure({ error: { message: 'The model `x` does not exist', httpCode: '404' } }), /model/);
   assert.match(llm.llmFailure({ choices: [{ finish_reason: 'length', message: { content: '' } }] }), /token limit/);
   assert.match(llm.llmFailure({}), /Groq request failed/);

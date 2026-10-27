@@ -49,7 +49,7 @@ export function llmText(response) {
 }
 
 // Returns null when the reply is usable, otherwise a plain-language reason.
-// n8n puts failed HTTP calls in `error` when the node continues on error.
+// Failed HTTP calls arrive as { error: { message, httpCode } }.
 export function llmFailure(response) {
   if (response && Array.isArray(response.choices) && response.choices.length) {
     const c = response.choices[0];
@@ -69,7 +69,7 @@ export function llmFailure(response) {
     return "The prompt was too large for your Groq plan's tokens-per-minute limit (413). Lower MAX_PROMPT_CHARS in the Config node.";
   }
   if (/\b401\b|invalid api key|unauthori[sz]ed/i.test(raw)) {
-    return 'Groq rejected the API key (401). Check the "Groq account" credential in n8n.';
+    return 'Groq rejected the API key (401). Check GROQ_API_KEY in the Vercel project settings, then redeploy.';
   }
   if (/\b404\b|model.*(not found|does not exist|decommissioned)/i.test(raw)) {
     return 'Groq does not recognise the model in the Config node (404). Pick one from console.groq.com/docs/models.';

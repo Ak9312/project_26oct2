@@ -28,7 +28,7 @@
       <div class="field" data-for="url">
         <label for="url">Article URL</label>
         <input id="url" name="url" type="url" placeholder="https://yourblog.com/composting-at-home" autocomplete="url">
-        <span class="hint">The page is fetched by n8n. If a site blocks it, switch to Paste content.</span>
+        <span class="hint">The page is fetched by the auditor. If a site blocks it, switch to Paste content.</span>
       </div>
 
       <div class="field" data-for="paste" hidden>
@@ -93,15 +93,15 @@
       <section class="card">
         <h2>Where results go</h2>
         <div style="display:flex;flex-direction:column;gap:12px;font-size:14px">
-          <div>Google Sheets: <b style="font-weight:500">Results</b> tab, one row per audit</div>
-          <div>Low scores: <b style="font-weight:500">Review</b> tab, plus an email to the reviewer</div>
+          <div>Every audit is saved privately in the app. <b style="font-weight:500">Download CSV</b> below opens in Google Sheets or Excel.</div>
+          <div>Low scores and failed checks go to the <a href="/review.html">Review queue</a>.</div>
         </div>
       </section>
     </aside>
   </div>
 
   <section class="card flush" aria-labelledby="recent-h">
-    <div class="card-head"><h2 id="recent-h">Recent audits</h2><span class="muted" style="font-size:13px" id="recent-note"></span></div>
+    <div class="card-head"><h2 id="recent-h">Recent audits</h2><div class="actions" style="gap:12px"><span class="muted" style="font-size:13px" id="recent-note"></span><button class="btn small" type="button" id="export-csv">Download CSV</button></div></div>
     <div id="recent"><div class="empty">Loading…</div></div>
   </section>
 </main>

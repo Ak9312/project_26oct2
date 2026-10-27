@@ -1,19 +1,21 @@
 # AI Content Quality Auditor
 
-An n8n workflow that scores articles out of 100 with an AI model on [Groq](https://groq.com), saves every result to Google Sheets, and sends low scores to a person for review. It comes with a small web app on Vercel for submitting articles, reading reports, working the review queue and checking the auditor against your own scores on 30 test articles.
+A web app on Vercel that scores articles out of 100 for accuracy, readability, keywords, missing sections and plagiarism. Every audit is saved, low scores go to a human review queue, and a validation page compares the auditor with your own scores on 30 test articles. The AI checks run on [Groq](https://groq.com).
+
+Everything runs inside the Vercel project: there is no n8n or other server to set up.
 
 ```mermaid
 flowchart LR
-  A[Web app on Vercel] -->|password + secret| B[n8n: audit pipeline]
+  A[You submit an article] --> B[Vercel function]
   B --> C[Readability<br/>code]
   B --> D[Groq: relevancy,<br/>claims, intent]
-  D --> E[SerpAPI: verify<br/>each claim]
-  B --> F[SerpAPI: top results<br/>→ section gaps]
-  B --> G[Copyscape:<br/>plagiarism]
-  C & E & F & G --> H[Score /100]
-  H --> I[(Google Sheets<br/>Results)]
-  H -->|below pass mark<br/>or hard flag| J[(Review tab)<br/>+ Gmail alert]
-  A -->|read / save| K[n8n: app API] --> I
+  D --> E[SerpAPI: search<br/>each claim]
+  E --> F[Groq: verify claims<br/>from results only]
+  B --> G[SerpAPI top results<br/>→ Groq: section gaps]
+  B --> H[Copyscape:<br/>plagiarism]
+  C & F & G & H --> I[Score /100]
+  I --> J[(Saved in private<br/>Vercel storage)]
+  J --> K[Review queue,<br/>validation, CSV]
 ```
 
 ## Scoring (100 points)
@@ -26,143 +28,107 @@ flowchart LR
 | **Missing sections** | 20 | Headings of the top-ranking pages are compared with yours; subtopics that appear on at least 3 of them must be covered (12). Intro, conclusion, FAQ, 3+ H2s (4). Length vs the median of the top pages (4). |
 | **Plagiarism** | 10 | Copyscape internet search with full comparison: 0–5% match = 10, 5–10% = 6, 10–15% = 2, over 15% = 0. |
 
-**An article goes to human review** when the total is below the pass mark (70 by default), when any claim is contradicted by a search result, when plagiarism is over 15%, or when a check could not run (for example, SerpAPI or Copyscape failed). A failed check never counts as a pass.
+**An article goes to the review queue** when the total is below the pass mark (70 by default), a claim is contradicted by a search result, plagiarism is over 15%, or a check couldn't run (a missing key, a rate limit, a blocked site). A check that didn't run never counts as a pass. If the main AI step fails, the audit is marked **Failed**: it still shows what was checked, but it doesn't count in validation.
 
 ### How hallucination is kept out
 
 - The AI never decides whether a related term is present; code searches the text.
 - A claim is only marked **verified** or **false** if the AI points to one of the search results it was given. Any other verdict, or a made-up URL, is downgraded to **unverified**.
 - Every number the AI returns is clamped to its range, and missing answers score as missing, not as full marks.
-- Readability, keyword placement, density, structure, length and plagiarism bands involve no LLM at all.
+- Readability, keyword placement, density, structure, length and plagiarism bands involve no AI at all.
 
 ### About Hemingway
 
-Hemingway Editor has no public API, so it can't be called from n8n. Readability rebuilds its approach instead: the Automated Readability Index for the grade (Hemingway's default target is grade 9), plus sentence-level hard/very-hard flags, passive voice and adverbs. The sentence thresholds and point bands are this project's own and are expected to be tuned during validation. When you score the 30 test articles, paste each one into Hemingway and compare.
+Hemingway Editor has no public API. Readability rebuilds its approach instead: the Automated Readability Index for the grade (Hemingway's default target is grade 9), plus sentence-level hard/very-hard flags, passive voice and adverbs. The thresholds are this project's own and are meant to be tuned during validation; compare with Hemingway when you score the 30 test articles.
+
+## Setup
+
+Everything is set in Vercel: **Project → Settings → Environment Variables**. After adding or changing a variable, **redeploy** (Deployments → ⋯ on the latest → Redeploy).
+
+### 1. Storage (already done)
+
+Audits are saved in a private Vercel Blob store connected to the project. It is created and connected for you; it shows under the project's **Storage** tab, and Vercel adds `BLOB_READ_WRITE_TOKEN` automatically. To check it, open `/api/health?check=storage` on your site: `"storage_check": "ok"` means it works.
+
+### 2. Keys
+
+| Variable | Needed? | Where to get it |
+|---|---|---|
+| `GROQ_API_KEY` | **Required** | [console.groq.com/keys](https://console.groq.com/keys) → Create API Key (starts with `gsk_`) |
+| `SERPAPI_KEY` | Recommended | [serpapi.com/manage-api-key](https://serpapi.com/manage-api-key). Without it, claims aren't fact-checked and missing sections aren't checked. |
+| `COPYSCAPE_USERNAME` | Recommended | Your Copyscape username |
+| `COPYSCAPE_API_KEY` | Recommended | [copyscape.com/apiconfigure.php](https://www.copyscape.com/apiconfigure.php). Without both Copyscape values, plagiarism isn't checked. |
+| `APP_PASSWORD` | Optional | Any password. If set, people must type it to use the app. If not set, anyone with the link can run audits on your API credits. |
+
+The top right of the site shows **Ready** when the Groq key and storage are in place, and a banner lists anything still missing.
+
+### 3. Optional tuning
+
+| Variable | Default | What it does |
+|---|---|---|
+| `PASS_MARK` | `70` | Totals below this go to review |
+| `GROQ_MODEL` | `openai/gpt-oss-120b` | Any Groq chat model ID from [console.groq.com/docs/models](https://console.groq.com/docs/models) |
+| `GROQ_REASONING_EFFORT` | `low` | For `openai/gpt-oss-*` models: `low`, `medium` or `high` |
+| `MAX_PROMPT_CHARS` | `14000` | Most article text sent to the AI in one request |
+| `LLM_PAUSE_SECONDS` | `15` | Pause between AI calls, to stay inside Groq's per-minute limit |
+| `COMPETITOR_PAGES` | `6` | Top-ranking pages compared for missing sections (max 10) |
+| `MOCK_MODE` | – | `1` shows built-in sample data and calls no outside service |
+
+## Limits to know
+
+**Vercel (free Hobby plan).** One audit must finish within 5 minutes; the app stops itself at about 4½ minutes and saves what it has. Blob storage includes 2,000 writes and 10,000 reads a month for free; an audit uses 2 writes, and each review or validation save uses 1. If the free limits are exceeded, Vercel pauses Blob storage until the month resets (it emails before that happens).
+
+**Groq.** Groq's docs list these limits for `openai/gpt-oss-120b`: 30 requests a minute, 1,000 a day, 8,000 tokens a minute and 200,000 tokens a day; your exact numbers are at [console.groq.com/settings/limits](https://console.groq.com/settings/limits). One audit uses roughly 10,000–15,000 tokens, so expect on the order of 15 audits a day on the free plan. The app keeps each request small, pauses between calls, waits and retries when Groq says "rate limit", and if it still fails, the report says so. For the 30 validation articles, spread them over two days or use a paid Groq plan (then raise `MAX_PROMPT_CHARS` and set `LLM_PAUSE_SECONDS` to 1).
+
+**Sites that block bots** (or need JavaScript to show text) can't be fetched; paste the content instead.
+
+## Results in Google Sheets
+
+Every audit is saved in the app. **Download CSV** (on the home page) exports all audits with their scores, review decisions and your validation scores. In Google Sheets: File → Import → Upload the file.
+
+## Validation against your own scores (30 articles)
+
+1. Run each test article through the app.
+2. On each report, before reading it closely, fill in **My scores** at the bottom using the same rubric.
+3. Open **Validation** (on the Review page): average gap, correlation, pass/fail agreement and bias, overall and per parameter.
+4. Any parameter with an average gap over 3 points is highlighted. Adjust that part (prompts in `src/llm.js`, thresholds in `src/readability.js` or `src/keywords.js`, bands in `src/scoring.js`), run `npm run generate`, push, and re-run the articles.
+
+Targets shown in the app: an average total gap within 5 points, and pass/fail agreement on at least 27 of 30. These are goals to test against, not results.
 
 ## What's in the repo
 
 ```
-n8n/                      Import these into n8n
-  content-auditor-audit.json   Audit pipeline (35 nodes)
-  content-auditor-api.json     Reads and saves app data (8 nodes)
-sheets/                   Header rows for the three Google Sheet tabs
-public/                   Web app (plain HTML/CSS/JS)
-api/                      Vercel functions: password check, proxy to n8n
-src/                      Scoring code, inlined into the n8n Code nodes
-scripts/                  Workflow generator, mock data, local server
-tests/                    Unit tests + end-to-end workflow simulation
+public/                 Web app (plain HTML/CSS/JS)
+api/                    Vercel functions
+  audit.js                starts an audit, runs it in the background (up to 5 min)
+  data.js                 list, report, review queue, validation
+  export.js               CSV download
+  health.js               setup status, ?check=storage
+  _engine.js              generated from src/ (don't edit)
+  _store.js               private Blob storage, sample data in mock mode
+src/                    Scoring and pipeline code
+  pipeline.js             the audit, step by step
+scripts/                engine and sample-data generators, local server
+tests/                  unit tests + full simulated audits (rate limits, missing keys, blocked sites, time limit)
 ```
 
-The n8n Code nodes are generated from `src/` by `npm run generate`, so the code that runs in n8n is the same code the tests run. Edit `src/`, never the Code nodes, then regenerate and re-import.
-
-## Setup
-
-You need: an n8n instance (n8n Cloud or self-hosted, reachable over HTTPS), and accounts for Groq (free plan works, see [Groq limits](#groq-limits)), SerpAPI, Copyscape (Premium API) and Google.
-
-### 1. Google Sheet
-
-1. Create a new Google Sheet.
-2. Make three tabs named exactly **Results**, **Review** and **Validation**.
-3. Put the header row in each from the matching file in `sheets/` (File → Import → Upload, "Replace current sheet", or paste the single line into row 1).
-4. Copy the Sheet ID from its URL: `docs.google.com/spreadsheets/d/`**`THIS_PART`**`/edit`.
-
-### 2. n8n
-
-1. **Create credentials** (n8n → Credentials → Add credential). Use these exact names so the imported nodes pick them up:
-
-   | Credential name | Type | Fields |
-   |---|---|---|
-   | Content Auditor webhook secret | Header Auth | Name `x-auditor-secret`, Value: a long random string (`openssl rand -hex 32`) |
-   | Groq account | **Groq** (built-in type; search "Groq") | API Key: your key from [console.groq.com/keys](https://console.groq.com/keys) (starts with `gsk_`). Click **Test**: a green "Connection tested successfully" means the key works. |
-   | SerpAPI key | Query Auth | Name `api_key`, Value: your SerpAPI key |
-   | Copyscape API key | Query Auth | Name `k`, Value: your Copyscape API key |
-   | Google Sheets account | Google Sheets OAuth2 API | Sign in with Google |
-   | Gmail account | Gmail OAuth2 API | Sign in with the Google account that sends the alerts |
-
-   On self-hosted n8n, Google sign-in needs your own Google Cloud OAuth client; see n8n's Google credentials docs.
-2. **Import** both files from `n8n/` (Workflows → Import from file).
-3. In each workflow, open any node with a credential warning and pick the credential from step 1.
-4. **Edit the `Config` node** in each workflow:
-   - Audit pipeline: `SPREADSHEET_ID`, `REVIEW_EMAIL`, `APP_URL` (your Vercel URL), `COPYSCAPE_USERNAME`, and optionally `MODEL`, `REASONING_EFFORT`, `MAX_PROMPT_CHARS`, `LLM_PAUSE_SECONDS`, `PASS_MARK`, `COMPETITOR_PAGES` (see [Groq limits](#groq-limits)).
-   - App API: the same `SPREADSHEET_ID` and `PASS_MARK`.
-5. **Activate** (publish) both workflows. The app calls their production URLs:
-   `https://<your-n8n>/webhook/content-auditor/audit` and `.../webhook/content-auditor/api`.
-
-### 3. Vercel
-
-1. Vercel → Add New → Project → import `Ak9312/project_26oct2`. No framework preset and no build command are needed (`vercel.json` handles it).
-2. Add environment variables (Settings → Environment Variables):
-
-   | Variable | Value |
-   |---|---|
-   | `APP_PASSWORD` | *Optional.* If set, people must type it to use the app. If not set, anyone with the link can run audits on your API credits. |
-   | `N8N_BASE_URL` | e.g. `https://yourname.app.n8n.cloud` (no trailing slash) |
-   | `N8N_WEBHOOK_SECRET` | The same random string as the n8n webhook credential |
-
-3. Deploy. Open the site; the header shows "n8n connected" when the two n8n settings are set, or lists what's missing.
-4. Put the deployed URL into `APP_URL` in the audit pipeline's Config node, so the review emails link to the report.
-
-### 4. First run
-
-Submit one article from the app. You land on the report page, which updates by itself. An audit usually takes 2–4 minutes, including two short pauses that keep it inside Groq's free-plan limits. If a step fails (for example a Groq rate limit or a site that blocks fetching), the report says so and names the step instead of loading forever. If nothing at all appears after 6 minutes, open **Executions** in n8n for the audit pipeline.
-
-## Groq limits
-
-The AI steps run on Groq. Groq's limits apply per organization, so extra API keys don't add capacity. Your exact numbers are at [console.groq.com/settings/limits](https://console.groq.com/settings/limits). Groq's docs list these limits for `openai/gpt-oss-120b`, the default model here: 30 requests a minute, 1,000 a day, **8,000 tokens a minute** and **200,000 tokens a day**.
-
-The tokens-per-minute limit is the one an audit can hit, so the workflow is built around it:
-
-- **`MAX_PROMPT_CHARS`** (default 14,000, about 3,500 tokens) caps how much article text goes into one request. Long articles are shortened section by section, and the report says when that happened.
-- **`LLM_PAUSE_SECONDS`** (default 20) pauses before the second and third Groq calls, so a single audit doesn't use up the minute's tokens.
-- Each Groq call **retries 5 times, 5 seconds apart**, when it fails.
-- If a call still fails, the audit **finishes anyway**. The report and the review email say which step failed and why (for example *"Groq rate limit reached (429)"*), and the audit is marked **Failed** so it doesn't count in validation.
-
-Roughly, one audit uses 10,000–15,000 tokens, so the daily token limit allows on the order of 15 audits a day on the free plan. Your real usage is visible in the Groq console. To run all 30 validation articles in one day, either spread them over two days or move to a paid Groq plan. On a paid plan, raise `MAX_PROMPT_CHARS` (e.g. 40,000) and set `LLM_PAUSE_SECONDS` to 1.
-
-`MODEL` accepts any Groq chat model ID from [console.groq.com/docs/models](https://console.groq.com/docs/models). For `openai/gpt-oss-*` models, `REASONING_EFFORT` can be `low` (default, fastest and fewest tokens), `medium` or `high`. Other models ignore it. Groq has separate limits per model, so switching models also gives you a separate budget.
-
-## Validation against your own scores (30 articles)
-
-1. Run each of your 30 test articles through the app.
-2. On each report, before reading it closely, fill in **My scores** at the bottom using the same rubric. They're saved to the Validation tab. You can also type them straight into the tab, keyed by `audit_id`.
-3. Open **Validation** (on the Review page). It shows the average gap in points, the correlation, the pass/fail agreement and the bias, overall and per parameter.
-4. Any parameter with an average gap over 3 points is highlighted. Adjust that part (prompt wording in `src/llm.js`, thresholds in `src/readability.js` or `src/keywords.js`, bands in `src/scoring.js`), run `npm run generate`, re-import the workflow and re-run the articles.
-
-Targets shown in the app: an average total gap within 5 points, and pass/fail agreement on at least 27 of 30. These are goals to test against, not results.
-
-## Costs
-
-Every audit makes up to 3 Groq calls (fewer when there are no checkable claims or no competitor pages), 1 SerpAPI search per claim (up to 8) plus 1 for the keyword, 1 Copyscape full-comparison search, and fetches up to 8 competitor pages. Check current pricing with each provider; Copyscape charges per search and full comparisons cost more than a basic search. The webhook secret stops anyone calling n8n directly. Without `APP_PASSWORD`, anyone who has the site link can still run audits through the site, so set one if the link might be shared.
-
-## Local preview and development
+## Local development
 
 ```bash
-MOCK_MODE=1 npm run dev     # http://localhost:3000 with sample data, no n8n needed
-npm test                    # 46 tests: scoring, API handler, and end-to-end runs of both workflows
-npm run generate            # rebuild n8n/*.json and the mock data from src/
-npm run check               # tests + confirm the committed workflows match src/
+npm install
+MOCK_MODE=1 npm run dev     # http://localhost:3000 with sample data
+npm test                    # 42 tests
+npm run generate            # rebuild api/_engine.js and sample data after editing src/
+npm run check               # tests + confirm generated files match src/
 ```
-
-No dependencies to install; Node 20 or newer is enough.
-
-## Known limits
-
-- **Sites that block bots** (or need JavaScript to show text) can't be fetched; paste the content instead. The same applies to some competitor pages, which are skipped.
-- **Originality.ai is not included.** Its official API reference wasn't reachable when this was built, so its plagiarism endpoint couldn't be confirmed; Copyscape (documented) does the scored check. It can be added later as a separate node.
-- **Readability is an approximation of Hemingway**, not Hemingway's own score; validation will show how close it is.
-- Claims are verified against Google snippets only. A true claim with no clear snippet stays **unverified** (half credit) rather than being guessed.
-- Google Sheets cells hold 50,000 characters, so very large reports are trimmed (competitor list and evidence first) before saving.
-- The n8n node versions used were checked against n8n 2.44.7's node definitions. If an import ever shows a node as unknown, update n8n.
 
 ## Troubleshooting
 
-| Symptom | Likely cause |
+| What you see | Likely cause |
 |---|---|
-| "n8n rejected the webhook secret" | `N8N_WEBHOOK_SECRET` in Vercel differs from the n8n header credential value, or the header name isn't `x-auditor-secret`. |
-| "n8n webhook not found" | A workflow isn't active, or `N8N_BASE_URL` is wrong. |
-| "Couldn't read the Google Sheet" | Wrong `SPREADSHEET_ID`, a tab name doesn't match exactly, or the Google credential lacks access. |
-| Report never appears | Check n8n Executions. Most often the article URL blocked the fetch, or an API key is wrong. |
-| Report says "Groq rate limit reached (429)" | You hit Groq's tokens-per-minute or daily limit. Wait a minute and run it again, raise `LLM_PAUSE_SECONDS`, lower `MAX_PROMPT_CHARS`, or check usage at console.groq.com. |
-| Report says "Groq rejected the API key (401)" | The key in the **Groq account** credential is wrong or was revoked. Paste a fresh key and click **Test**. |
-| "Groq" isn't in n8n's credential list | Your n8n has its AI nodes turned off. Create a **Header Auth** credential instead (Name `Authorization`, Value `Bearer gsk_...`), then in the three **Groq:** nodes set Authentication to *Generic Credential Type → Header Auth* and pick it. |
-| Every article goes to review with "Plagiarism check did not run" | Copyscape username/key wrong, or the account has no credit. |
+| "Setup needed" at the top right | `GROQ_API_KEY` missing, or storage not connected. Add it, then redeploy. |
+| Report says "GROQ_API_KEY is not set" | The key was added but the site wasn't redeployed, or the name has a typo. |
+| "Groq rate limit reached (429)" | You hit Groq's per-minute or daily limit. Wait and run it again, raise `LLM_PAUSE_SECONDS`, or check usage at console.groq.com. |
+| "Groq rejected the API key (401)" | Wrong or revoked key. Create a new one and replace `GROQ_API_KEY`. |
+| "Couldn't fetch …" | The site blocks automated requests. Paste the content instead. |
+| "No result after 6 minutes" | Something crashed before saving. Check the project's **Logs** in Vercel. |
+| "Storage is not connected" | The Blob store was disconnected. Project → Storage → connect it, then redeploy. |

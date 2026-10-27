@@ -1,5 +1,5 @@
 // Joins src/ files into one plain script (no import/export) so the same code
-// runs in n8n Code nodes and in the unit tests.
+// is bundled into api/_engine.js and runs in the unit tests.
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';

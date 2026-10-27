@@ -39,6 +39,27 @@ export async function api(path, body) {
   return data;
 }
 
+// Downloads a file from the API (sends the password header when one is set).
+export async function downloadFile(path, fallbackName) {
+  const r = await fetch('/api/' + path, { headers: { 'x-app-password': getPassword() } });
+  if (r.status === 401) { showGate(''); throw new ApiError('Password needed', 401); }
+  if (!r.ok) {
+    let msg = 'Download failed (HTTP ' + r.status + ').';
+    try { msg = (await r.json()).error || msg; } catch (e) { /* keep default */ }
+    throw new ApiError(msg, r.status);
+  }
+  const cd = r.headers.get('content-disposition') || '';
+  const m = cd.match(/filename="([^"]+)"/);
+  const url = URL.createObjectURL(await r.blob());
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = m ? m[1] : fallbackName;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 export function data(action, extra) {
   return api('data', Object.assign({ action }, extra || {}));
 }
@@ -93,12 +114,19 @@ export function mountHeader(active) {
       el.classList.add('mock');
       return;
     }
-    const missing = Object.entries(h.configured || {}).filter(([, v]) => !v).map(([k]) => k);
-    el.textContent = missing.length ? 'Setup incomplete' : 'n8n connected';
-    if (missing.length) {
-      el.classList.add('mock');
+    const req = h.required || {};
+    const opt = h.optional || {};
+    const notes = [];
+    if (!req.GROQ_API_KEY) notes.push('<b style="font-weight:600">GROQ_API_KEY</b> is missing, so the AI checks can\'t run.');
+    if (!req.STORAGE) notes.push('Storage isn\'t connected, so audits can\'t be saved.');
+    if (!opt.SERPAPI_KEY) notes.push('SERPAPI_KEY isn\'t set: claims won\'t be fact-checked and missing sections won\'t be checked.');
+    if (!opt.COPYSCAPE) notes.push('COPYSCAPE_USERNAME / COPYSCAPE_API_KEY aren\'t set: plagiarism won\'t be checked.');
+    const ready = req.GROQ_API_KEY && req.STORAGE;
+    el.textContent = ready ? (notes.length ? 'Ready (some checks off)' : 'Ready') : 'Setup needed';
+    if (!ready) el.classList.add('mock');
+    if (notes.length) {
       const b = document.getElementById('setup-banner');
-      b.innerHTML = `<div>Missing Vercel environment variables: ${missing.map(esc).join(', ')}. See the README.</div>`;
+      b.innerHTML = `<div>${notes.join(' ')} Add keys in Vercel → Settings → Environment Variables, then redeploy.</div>`;
       b.hidden = false;
     }
   }).catch(() => { document.getElementById('conn').textContent = ''; });

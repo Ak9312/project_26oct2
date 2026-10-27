@@ -71,7 +71,7 @@ export function parseCopyscape(resp) {
   };
 }
 
-// Google Sheets values -> objects keyed by the header row.
+// Table rows (header row first) -> objects keyed by the header row.
 export function rowsToObjects(values) {
   const rows = Array.isArray(values) ? values : [];
   if (!rows.length) return [];

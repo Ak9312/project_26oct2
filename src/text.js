@@ -1,5 +1,5 @@
 // Shared text helpers. Plain functions only (no imports) so the build
-// script can inline this file into n8n Code nodes.
+// script can bundle it into api/_engine.js.
 
 export function decodeEntities(s) {
   if (!s) return '';

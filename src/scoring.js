@@ -2,22 +2,6 @@
 // article goes to human review.
 // Depends on text.js.
 
-export const RESULTS_COLUMNS = [
-  'audit_id', 'created_at', 'status', 'title', 'url', 'keyword', 'total',
-  'accuracy', 'readability', 'keywords', 'sections', 'plagiarism',
-  'review_reasons', 'model', 'report_json',
-];
-
-export const REVIEW_COLUMNS = [
-  'audit_id', 'created_at', 'title', 'url', 'total', 'review_reasons',
-  'reviewer_score', 'decision', 'notes', 'reviewed_at',
-];
-
-export const VALIDATION_COLUMNS = [
-  'audit_id', 'title', 'my_accuracy', 'my_readability', 'my_keywords',
-  'my_sections', 'my_plagiarism', 'my_total',
-];
-
 const CONCLUSION_RE = /\b(conclusion|summary|final thoughts|wrapping up|key takeaways|bottom line|in short)\b/i;
 const FAQ_RE = /\b(faqs?|frequently asked|common questions)\b/i;
 
@@ -190,20 +174,6 @@ export function buildReport(ctx) {
   };
 }
 
-// Sheets cells hold at most 50,000 characters; keep a margin.
-export function compactReportJson(report) {
-  let json = JSON.stringify(report);
-  if (json.length <= 45000 || !report.parameters) return json.slice(0, 45000);
-  const r = JSON.parse(json);
-  r.parameters.sections.competitors = [];
-  r.parameters.accuracy.sections = r.parameters.accuracy.sections.slice(0, 15);
-  json = JSON.stringify(r);
-  if (json.length <= 45000) return json;
-  r.parameters.accuracy.claims.forEach((c) => { c.evidence = ''; });
-  r.parameters.readability.hardest_sentence = null;
-  return JSON.stringify(r).slice(0, 45000);
-}
-
 // For audits that stop before scoring (article could not be fetched or read).
 export function buildErrorReport(ctx) {
   return {
@@ -220,28 +190,4 @@ export function buildErrorReport(ctx) {
     input: { keyword: ctx.input.keyword, secondary: ctx.input.secondary, target_grade: ctx.input.target_grade, market_label: ctx.input.market_label },
     parameters: null,
   };
-}
-
-export function resultsRow(report) {
-  if (!report.parameters) {
-    return [
-      report.audit_id, report.created_at, report.status, report.article.title, report.article.url,
-      report.input.keyword, '', '', '', '', '', '', report.review_reasons.join(' | '), report.model,
-      compactReportJson(report),
-    ];
-  }
-  const p = report.parameters;
-  return [
-    report.audit_id, report.created_at, report.status, report.article.title, report.article.url,
-    report.input.keyword, report.total, p.accuracy.score, p.readability.score, p.keywords.score,
-    p.sections.score, p.plagiarism.score, report.review_reasons.join(' | '), report.model,
-    compactReportJson(report),
-  ];
-}
-
-export function reviewRow(report) {
-  return [
-    report.audit_id, report.created_at, report.article.title, report.article.url, report.total,
-    report.review_reasons.join(' | '), '', 'pending', '', '',
-  ];
 }

@@ -1,7 +1,7 @@
 // Turns a fetched HTML page or pasted Markdown-ish text into one article shape:
 // { source, url, title, meta_description, h1, intro, sections[], body_text,
 //   word_count, h2_count }
-// Depends on text.js (inlined before this file in n8n).
+// Depends on text.js (bundled before this file).
 
 export function stripTags(html) {
   return collapseWhitespace(decodeEntities(String(html || '').replace(/<[^>]+>/g, ' ')));

@@ -1,4 +1,4 @@
-import { mountHeader, setPendingCount, data, api, esc, fmtDate, statusPill, showError, bar } from '../app.js';
+import { mountHeader, setPendingCount, data, api, esc, fmtDate, statusPill, showError, bar, downloadFile } from '../app.js';
 import { PARAMS } from '../validation.js';
 
 mountHeader('home');
@@ -73,7 +73,7 @@ async function loadRecent() {
       box.innerHTML = '<div class="empty">No audits yet. Run your first one above.</div>';
       return;
     }
-    document.getElementById('recent-note').textContent = 'Latest ' + Math.min(r.audits.length, 20) + ' of ' + r.audits.length;
+    document.getElementById('recent-note').textContent = 'Latest ' + Math.min(r.audits.length, 20) + ' of ' + (r.total_audits || r.audits.length);
     box.innerHTML = `<div class="table-wrap"><table style="min-width:720px">
       <thead><tr><th>Article</th><th>Primary keyword</th><th>Score</th><th>Status</th><th>Audited</th></tr></thead>
       <tbody>${r.audits.slice(0, 20).map((a) => `
@@ -89,3 +89,15 @@ async function loadRecent() {
   }
 }
 loadRecent();
+
+const exportBtn = document.getElementById('export-csv');
+exportBtn.addEventListener('click', async () => {
+  exportBtn.setAttribute('aria-busy', 'true');
+  try {
+    await downloadFile('export', 'content-audits.csv');
+  } catch (err) {
+    if (err.status !== 401) showError(document.getElementById('recent'), err);
+  } finally {
+    exportBtn.removeAttribute('aria-busy');
+  }
+});

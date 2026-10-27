@@ -2,17 +2,19 @@
   "name": "content-quality-auditor",
   "version": "1.0.0",
   "private": true,
-  "description": "AI content quality auditor: n8n workflow that scores articles (accuracy, readability, keywords, missing sections, plagiarism), saves results to Google Sheets and sends low scores for human review, with a web app on Vercel.",
+  "description": "AI content quality auditor on Vercel: scores articles with Groq (accuracy, readability, keywords, missing sections, plagiarism), saves every audit, sends low scores to a review queue and validates against your own scores.",
   "type": "module",
   "engines": {
     "node": ">=20"
   },
   "scripts": {
     "test": "node --test tests/*.test.mjs",
-    "build:n8n": "node scripts/build-n8n.mjs",
-    "check": "npm test && npm run generate && git diff --exit-code -- n8n/ api/_mock-data.js api/_mock-handler.js",
+    "check": "npm test && npm run generate && git diff --exit-code -- api/_engine.js api/_mock-data.js",
     "dev": "node scripts/dev-server.mjs",
-    "build:mock": "node scripts/build-mock.mjs",
-    "generate": "node scripts/build-n8n.mjs && node scripts/build-mock.mjs"
+    "generate": "node scripts/build-engine.mjs && node scripts/build-mock.mjs"
+  },
+  "dependencies": {
+    "@vercel/blob": "2.8.1",
+    "@vercel/functions": "3.9.0"
   }
 }

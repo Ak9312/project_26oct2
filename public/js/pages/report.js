@@ -23,7 +23,7 @@ function running() {
         <li>Asks the AI model on Groq to check each heading against its section and pull out factual claims</li>
         <li>Searches each claim and keeps only verdicts backed by a search result</li>
         <li>Compares your outline with the top-ranking pages for the keyword</li>
-        <li>Runs the Copyscape plagiarism check, then saves the result to your Sheet</li>
+        <li>Runs the Copyscape plagiarism check, then saves the result</li>
       </ol>
       <p class="muted" style="margin:0;font-size:13px">Audit ID <span class="mono">${esc(id)}</span></p>
     </section>`;
@@ -33,9 +33,8 @@ function timedOut() {
   box.innerHTML = `
     <section class="card">
       <h1 style="margin:0 0 8px;font-size:22px;font-weight:600">No result after 6 minutes</h1>
-      <p style="margin:0 0 12px">The audit probably stopped with an error. Open <b style="font-weight:500">Executions</b> in n8n for the
-      “Content Auditor · audit pipeline” workflow to see which step failed. A common cause is a site that blocks
-      fetching; paste the content instead.</p>
+      <p style="margin:0 0 12px">The audit stopped without saving a result. In Vercel, open the project's <b style="font-weight:500">Logs</b>
+      to see the error, or run the audit again. If it was a URL, try pasting the content instead.</p>
       <div class="actions"><a class="btn" href="/">Start a new audit</a><button class="btn" type="button" id="retry">Check again</button></div>
     </section>`;
   document.getElementById('retry').addEventListener('click', () => location.reload());
@@ -49,7 +48,7 @@ async function poll() {
     if (r.audit && !r.report) { box.innerHTML = '<div class="form-error">The saved report could not be read from the Sheet.</div>'; return; }
     if (Date.now() - started > MAX_WAIT_MS) return timedOut();
     running();
-    setTimeout(poll, 5000);
+    setTimeout(poll, 8000);
   } catch (err) {
     showError(box, err);
   }

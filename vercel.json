@@ -4,7 +4,10 @@
   "outputDirectory": "public",
   "cleanUrls": false,
   "functions": {
-    "api/*.js": { "maxDuration": 30 }
+    "api/audit.js": { "maxDuration": 300 },
+    "api/data.js": { "maxDuration": 30 },
+    "api/export.js": { "maxDuration": 30 },
+    "api/health.js": { "maxDuration": 10 }
   },
   "headers": [
     {
