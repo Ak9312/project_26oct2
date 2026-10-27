@@ -117,7 +117,8 @@ export function mountHeader(active) {
     const req = h.required || {};
     const opt = h.optional || {};
     const notes = [];
-    if (!req.GROQ_API_KEY) notes.push('<b style="font-weight:600">GROQ_API_KEY</b> is missing, so the AI checks can\'t run.');
+    if (h.groq_key_problem) notes.push('<b style="font-weight:600">' + esc(h.groq_key_problem) + '</b>');
+    else if (!req.GROQ_API_KEY) notes.push('<b style="font-weight:600">GROQ_API_KEY</b> is missing, so the AI checks can\'t run.');
     if (!req.STORAGE) notes.push('Storage isn\'t connected, so audits can\'t be saved.');
     if (!opt.SERPAPI_KEY) notes.push('SERPAPI_KEY isn\'t set: claims won\'t be fact-checked and missing sections won\'t be checked.');
     if (!opt.COPYSCAPE) notes.push('COPYSCAPE_USERNAME / COPYSCAPE_API_KEY aren\'t set: plagiarism won\'t be checked.');

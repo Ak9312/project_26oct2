@@ -229,3 +229,16 @@ test('summary, index and CSV export', async () => {
   assert.match(csv, /aud_test_000001/);
   assert.equal(csv.trim().split('\r\n').length, 2);
 });
+
+test('a Groq key pasted as placeholder dots is caught with a plain message', async () => {
+  const { groqKeyProblem } = await import('../api/_engine.js');
+  assert.match(groqKeyProblem('••••••••••••••••'), /hidden-placeholder dots/);
+  assert.match(groqKeyProblem('gsk_abc def'), /spaces or unusual characters/);
+  assert.equal(groqKeyProblem('  "gsk_abc123"  '), '');
+  assert.match(groqKeyProblem(''), /not set/);
+  const w = world();
+  const r = await runAudit(job(), auditConfig(Object.assign({}, ENV, { GROQ_API_KEY: '•••••••••' })), w.deps);
+  assert.equal(r.status, 'error');
+  assert.match(r.review_reasons.join(' '), /hidden-placeholder dots/);
+  assert.equal(w.calls.filter((c) => c.kind === 'groq').length, 0, 'never sends a bad key');
+});

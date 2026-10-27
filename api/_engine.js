@@ -1227,11 +1227,30 @@ function toCsv(index) {
 
 const AUDIT_UA = 'Mozilla/5.0 (compatible; ContentQualityAuditor/1.0; +https://github.com/Ak9312/project_26oct2)';
 
+// Removes spaces and wrapping quotes people often paste along with a key.
+function cleanKey(v) {
+  return String(v || '').trim().replace(/^["'`]+|["'`]+$/g, '').trim();
+}
+
+// Plain-language problem with the Groq key, or '' if it looks usable.
+function groqKeyProblem(raw) {
+  const key = cleanKey(raw);
+  if (!key) return 'GROQ_API_KEY is not set in the Vercel project settings.';
+  if (/[•●*·…]/.test(key) || /^[^\x21-\x7e]/.test(key)) {
+    return 'GROQ_API_KEY contains hidden-placeholder dots (•••) instead of the real key. Copy the key again from console.groq.com/keys (create a new one if needed), paste it into the variable, then redeploy.';
+  }
+  if (/[^\x21-\x7e]/.test(key)) {
+    return 'GROQ_API_KEY contains spaces or unusual characters. Paste the key exactly as Groq shows it (it starts with gsk_), then redeploy.';
+  }
+  return '';
+}
+
 function auditConfig(env) {
   const e = env || {};
   const num = (v, d) => (Number.isFinite(Number(v)) && String(v).trim() !== '' ? Number(v) : d);
   return {
-    groqKey: (e.GROQ_API_KEY || '').trim(),
+    groqKey: cleanKey(e.GROQ_API_KEY),
+    groqKeyProblem: groqKeyProblem(e.GROQ_API_KEY),
     model: (e.GROQ_MODEL || '').trim() || 'openai/gpt-oss-120b',
     reasoningEffort: (e.GROQ_REASONING_EFFORT || '').trim() || 'low',
     maxPromptChars: num(e.MAX_PROMPT_CHARS, 14000),
@@ -1271,7 +1290,8 @@ async function fetchJson(deps, url, opts, ms) {
 // One Groq call with retries. Honors Groq's retry-after header on 429,
 // never waits past the audit deadline. Returns { error, data }.
 async function callGroq(deps, cfg, prompt, maxTokens, timeLeft) {
-  if (!cfg.groqKey) return { error: 'GROQ_API_KEY is not set in the Vercel project settings.', data: {} };
+  const keyProblem = cfg.groqKeyProblem !== undefined ? cfg.groqKeyProblem : groqKeyProblem(cfg.groqKey);
+  if (keyProblem) return { error: keyProblem, data: {} };
   const body = JSON.stringify(groqBody(cfg.model, prompt, maxTokens, cfg.reasoningEffort));
   let last = null;
   for (let attempt = 0; attempt < 4; attempt++) {
@@ -1427,4 +1447,4 @@ async function runAudit(job, cfg, deps) {
   });
 }
 
-export { normalizeInput, makeAuditId, runAudit, auditConfig, buildReport, buildErrorReport, summarize, upsertEntry, replaceEntry, listResponse, getResponse, reviewListResponse, applyReview, applyValidation, validationResponse, toCsv };
+export { normalizeInput, makeAuditId, runAudit, auditConfig, groqKeyProblem, buildReport, buildErrorReport, summarize, upsertEntry, replaceEntry, listResponse, getResponse, reviewListResponse, applyReview, applyValidation, validationResponse, toCsv };

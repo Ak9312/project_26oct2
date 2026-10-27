@@ -11,7 +11,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 export const ENGINE_FILES = ['text.js', 'parse.js', 'readability.js', 'keywords.js', 'llm.js', 'scoring.js', 'input.js', 'external.js', 'appdata.js', 'pipeline.js'];
 export const ENGINE_EXPORTS = [
-  'normalizeInput', 'makeAuditId', 'runAudit', 'auditConfig', 'buildReport', 'buildErrorReport',
+  'normalizeInput', 'makeAuditId', 'runAudit', 'auditConfig', 'groqKeyProblem', 'buildReport', 'buildErrorReport',
   'summarize', 'upsertEntry', 'replaceEntry', 'listResponse', 'getResponse', 'reviewListResponse',
   'applyReview', 'applyValidation', 'validationResponse', 'toCsv',
 ];

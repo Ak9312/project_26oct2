@@ -3,15 +3,18 @@
 // to prove the Blob store works (costs one Blob write).
 import { send, MOCK } from './_lib.js';
 import { storageConfigured, getStore } from './_store.js';
+import { groqKeyProblem } from './_engine.js';
 
 export default async function handler(req, res) {
   const has = (k) => Boolean((process.env[k] || '').trim());
+  const keyProblem = groqKeyProblem(process.env.GROQ_API_KEY);
   const out = {
     ok: true,
     mock: MOCK,
     password_required: has('APP_PASSWORD'),
+    groq_key_problem: has('GROQ_API_KEY') ? keyProblem : '',
     required: {
-      GROQ_API_KEY: has('GROQ_API_KEY'),
+      GROQ_API_KEY: !keyProblem,
       STORAGE: storageConfigured(),
     },
     optional: {
