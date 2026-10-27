@@ -174,7 +174,7 @@ test('without SerpAPI and Copyscape keys the audit still finishes and says what 
   const r = await runAudit(job(), auditConfig({ GROQ_API_KEY: 'gsk_test' }), w.deps);
   const reasons = r.review_reasons.join(' ');
   assert.match(reasons, /SERPAPI_KEY is not set/);
-  assert.match(reasons, /Copyscape is not set up/);
+  assert.match(reasons, /needs SERPAPI_KEY \(free Google phrase check\) or Copyscape keys/);
   assert.equal(r.parameters.accuracy.claim_counts.unverified, 2);
   assert.equal(w.calls.filter((c) => c.kind === 'serp' || c.kind === 'copyscape').length, 0);
   assert.equal(r.status, 'needs_review');
@@ -241,4 +241,63 @@ test('a Groq key pasted as placeholder dots is caught with a plain message', asy
   assert.equal(r.status, 'error');
   assert.match(r.review_reasons.join(' '), /hidden-placeholder dots/);
   assert.equal(w.calls.filter((c) => c.kind === 'groq').length, 0, 'never sends a bad key');
+});
+
+test('free plagiarism check: exact sentences searched on Google through SerpAPI', async () => {
+  let phraseN = 0;
+  const w = world({
+    serp: (q) => {
+      const query = q.get('q');
+      if (query.startsWith('"')) {
+        phraseN += 1;
+        const phrase = query.slice(1, -1);
+        // Only the first sentence exists elsewhere; one result is our own site.
+        const rows = phraseN === 1
+          ? [{ link: 'https://copycat.example/post', title: 'Copy', snippet: '... ' + phrase + ' ...' },
+             { link: 'https://other.example/x', title: 'Other', snippet: 'unrelated words about gardens' }]
+          : [{ link: 'https://other.example/y', title: 'Other', snippet: 'nothing in common here at all' }];
+        return response(200, { organic_results: rows });
+      }
+      if (query === 'composting at home') return response(200, { organic_results: [1, 2, 3].map((i) => ({ link: 'https://comp' + i + '.example/guide', title: 'Comp ' + i })) });
+      return response(200, { organic_results: [{ link: 'https://src.example/' + encodeURIComponent(query), title: 'Source', snippet: 'info' }] });
+    },
+  });
+  const env = { GROQ_API_KEY: 'gsk_test', SERPAPI_KEY: 'serp_test' };
+  const r = await runAudit(job(), auditConfig(env), w.deps);
+  const P = r.parameters.plagiarism;
+  assert.equal(P.method, 'phrase');
+  assert.equal(P.checked, true);
+  assert.ok(P.phrases_checked >= 2 && P.phrases_checked <= 3, 'checked ' + P.phrases_checked);
+  assert.equal(P.phrases_found, 1);
+  assert.equal(P.score, 5);
+  assert.equal(P.sources[0].url, 'https://copycat.example/post');
+  assert.ok(r.flags.some((f) => f.code === 'plagiarism_phrase' && !f.hard));
+  assert.equal(w.calls.filter((c) => c.kind === 'copyscape').length, 0);
+  const serps = w.calls.filter((c) => c.kind === 'serp').length;
+  assert.ok(serps <= 5 + 1 + 3, 'SerpAPI searches per audit: ' + serps);
+});
+
+test('free plagiarism check: two or more copied sentences force review', async () => {
+  const w = world({
+    serp: (q) => {
+      const query = q.get('q');
+      if (query.startsWith('"')) return response(200, { organic_results: [{ link: 'https://copycat.example/' + query.length, title: 'Copy', snippet: query.slice(1, -1) }] });
+      return response(200, { organic_results: [] });
+    },
+  });
+  const r = await runAudit(job(), auditConfig({ GROQ_API_KEY: 'gsk_test', SERPAPI_KEY: 'serp_test' }), w.deps);
+  assert.equal(r.parameters.plagiarism.score, 0);
+  assert.ok(r.flags.some((f) => f.code === 'plagiarism_phrases' && f.hard));
+  assert.equal(r.status, 'needs_review');
+});
+
+test('claim searches are capped to save SerpAPI searches', async () => {
+  const many = (body) => response(200, groqReply({
+    sections: [], title_promise: { score: 3 }, freshness: { score: 5 }, related_terms: [], intent: { score: 3 },
+    claims: Array.from({ length: 8 }, (_, i) => ({ claim: 'Claim number ' + i, search_query: 'query ' + i })),
+  }));
+  const w = world({ groq: [many, () => response(200, groqReply({ claims: [] })), gapOk] });
+  const r = await runAudit(job(), auditConfig(ENV), w.deps);
+  assert.equal(w.calls.filter((c) => c.kind === 'serp' && c.q.startsWith('query ')).length, 5);
+  assert.equal(r.parameters.accuracy.claim_counts.total, 5);
 });

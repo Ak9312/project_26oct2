@@ -90,12 +90,26 @@ function sectionsBlock(article, competitors, topics, gapFailed) {
   };
 }
 
+// Free Google phrase check: points by how many sampled sentences were found
+// word-for-word on other sites. 0 found = 10, 1 = 5, 2 or more = 0.
+export function phrasePoints(found) {
+  if (!Number.isFinite(found)) return null;
+  if (found <= 0) return 10;
+  if (found === 1) return 5;
+  return 0;
+}
+
 function plagiarismBlock(p) {
   const percent = p && p.checked && Number.isFinite(Number(p.percent)) ? Number(p.percent) : null;
-  const pts = percent === null ? null : plagiarismPoints(percent);
+  const phrase = Boolean(p && p.method === 'phrase');
+  const found = phrase && p.checked ? Number(p.phrases_found) || 0 : null;
+  const pts = percent === null ? null : phrase ? phrasePoints(found) : plagiarismPoints(percent);
   return {
     checked: percent !== null,
+    method: phrase ? 'phrase' : 'copyscape',
     percent,
+    phrases_checked: phrase ? Number(p.phrases_checked) || 0 : null,
+    phrases_found: found,
     sources: ((p && p.sources) || []).slice(0, 5),
     error: (p && p.error) || '',
     points: { match: pts },
@@ -118,7 +132,11 @@ export function buildReport(ctx) {
   if (accuracy.claim_counts.false > 0) {
     flags.push({ code: 'false_claim', hard: true, message: accuracy.claim_counts.false + ' claim(s) contradicted by search results' });
   }
-  if (plagiarism.checked && plagiarism.percent > 15) {
+  if (plagiarism.checked && plagiarism.method === 'phrase' && plagiarism.phrases_found >= 2) {
+    flags.push({ code: 'plagiarism_phrases', hard: true, message: plagiarism.phrases_found + ' of ' + plagiarism.phrases_checked + ' sampled sentences were found word-for-word on other sites' });
+  } else if (plagiarism.checked && plagiarism.method === 'phrase' && plagiarism.phrases_found === 1) {
+    flags.push({ code: 'plagiarism_phrase', hard: false, message: '1 sampled sentence was found word-for-word on another site' });
+  } else if (plagiarism.checked && plagiarism.percent > 15) {
     flags.push({ code: 'plagiarism_over_15', hard: true, message: 'Plagiarism match ' + plagiarism.percent + '% (over 15%)' });
   }
   if (!plagiarism.checked) {

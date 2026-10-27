@@ -12,7 +12,7 @@ flowchart LR
   D --> E[SerpAPI: search<br/>each claim]
   E --> F[Groq: verify claims<br/>from results only]
   B --> G[SerpAPI top results<br/>→ Groq: section gaps]
-  B --> H[Copyscape:<br/>plagiarism]
+  B --> H[SerpAPI: exact-sentence<br/>search for copies]
   C & F & G & H --> I[Score /100]
   I --> J[(Saved in private<br/>Vercel storage)]
   J --> K[Review queue,<br/>validation, CSV]
@@ -26,7 +26,7 @@ flowchart LR
 | **Readability** | 20 | Hemingway-style, computed in code: ARI grade vs your target (8), share of hard/very hard sentences (6), passive voice (3), adverbs per 100 words (3). |
 | **Keywords** | 20 | Primary keyword in title, H1, first 100 words and meta description (6). Density 0.5–2.5% (4). Your secondary keywords plus up to 10 related terms, each checked in the text by code (6). Search intent match (4). |
 | **Missing sections** | 20 | Headings of the top-ranking pages are compared with yours; subtopics that appear on at least 3 of them must be covered (12). Intro, conclusion, FAQ, 3+ H2s (4). Length vs the median of the top pages (4). |
-| **Plagiarism** | 10 | Copyscape internet search with full comparison: 0–5% match = 10, 5–10% = 6, 10–15% = 2, over 15% = 0. |
+| **Plagiarism** | 10 | **Free Google phrase check** (uses your SerpAPI key): 3 distinctive sentences from the article are searched on Google in quotes. None found on other sites = 10, one = 5, two or more = 0 and sent to review. It catches copied passages, not reworded ones. Optional upgrade: if Copyscape keys are added, a full Copyscape comparison is used instead (0–5% match = 10, 5–10% = 6, 10–15% = 2, over 15% = 0). |
 
 **An article goes to the review queue** when the total is below the pass mark (70 by default), a claim is contradicted by a search result, plagiarism is over 15%, or a check couldn't run (a missing key, a rate limit, a blocked site). A check that didn't run never counts as a pass. If the main AI step fails, the audit is marked **Failed**: it still shows what was checked, but it doesn't count in validation.
 
@@ -54,9 +54,8 @@ Audits are saved in a private Vercel Blob store connected to the project. It is 
 | Variable | Needed? | Where to get it |
 |---|---|---|
 | `GROQ_API_KEY` | **Required** | [console.groq.com/keys](https://console.groq.com/keys) → Create API Key (starts with `gsk_`) |
-| `SERPAPI_KEY` | Recommended | [serpapi.com/manage-api-key](https://serpapi.com/manage-api-key). Without it, claims aren't fact-checked and missing sections aren't checked. |
-| `COPYSCAPE_USERNAME` | Recommended | Your Copyscape username |
-| `COPYSCAPE_API_KEY` | Recommended | [copyscape.com/apiconfigure.php](https://www.copyscape.com/apiconfigure.php). Without both Copyscape values, plagiarism isn't checked. |
+| `SERPAPI_KEY` | Recommended | [serpapi.com/manage-api-key](https://serpapi.com/manage-api-key) (free plan available). Powers fact-checking, missing sections and the free plagiarism check. |
+| `COPYSCAPE_USERNAME`, `COPYSCAPE_API_KEY` | Optional, paid | Only if you want Copyscape's full plagiarism comparison instead of the free phrase check. |
 | `APP_PASSWORD` | Optional | Any password. If set, people must type it to use the app. If not set, anyone with the link can run audits on your API credits. |
 
 The top right of the site shows **Ready** when the Groq key and storage are in place, and a banner lists anything still missing.
@@ -71,6 +70,8 @@ The top right of the site shows **Ready** when the Groq key and storage are in p
 | `MAX_PROMPT_CHARS` | `14000` | Most article text sent to the AI in one request |
 | `LLM_PAUSE_SECONDS` | `15` | Pause between AI calls, to stay inside Groq's per-minute limit |
 | `COMPETITOR_PAGES` | `6` | Top-ranking pages compared for missing sections (max 10) |
+| `MAX_CLAIM_SEARCHES` | `5` | Most claims fact-checked per audit (each uses one SerpAPI search) |
+| `PLAGIARISM_PHRASES` | `3` | Sentences searched for the free plagiarism check (0 turns it off) |
 | `MOCK_MODE` | – | `1` shows built-in sample data and calls no outside service |
 
 ## Limits to know
@@ -78,6 +79,8 @@ The top right of the site shows **Ready** when the Groq key and storage are in p
 **Vercel (free Hobby plan).** One audit must finish within 5 minutes; the app stops itself at about 4½ minutes and saves what it has. Blob storage includes 2,000 writes and 10,000 reads a month for free; an audit uses 2 writes, and each review or validation save uses 1. If the free limits are exceeded, Vercel pauses Blob storage until the month resets (it emails before that happens).
 
 **Groq.** Groq's docs list these limits for `openai/gpt-oss-120b`: 30 requests a minute, 1,000 a day, 8,000 tokens a minute and 200,000 tokens a day; your exact numbers are at [console.groq.com/settings/limits](https://console.groq.com/settings/limits). One audit uses roughly 10,000–15,000 tokens, so expect on the order of 15 audits a day on the free plan. The app keeps each request small, pauses between calls, waits and retries when Groq says "rate limit", and if it still fails, the report says so. For the 30 validation articles, spread them over two days or use a paid Groq plan (then raise `MAX_PROMPT_CHARS` and set `LLM_PAUSE_SECONDS` to 1).
+
+**SerpAPI.** The free plan is small: third-party pricing pages list about 250 searches a month and 50 an hour (one says 100 a month); your SerpAPI dashboard shows your real allowance. One audit uses at most 9 searches (up to 5 claims, 1 for top results, 3 for the plagiarism check), so roughly 25 audits a month on 250 searches. Lower `MAX_CLAIM_SEARCHES` or `PLAGIARISM_PHRASES` to stretch it.
 
 **Sites that block bots** (or need JavaScript to show text) can't be fetched; paste the content instead.
 
@@ -116,7 +119,7 @@ tests/                  unit tests + full simulated audits (rate limits, missing
 ```bash
 npm install
 MOCK_MODE=1 npm run dev     # http://localhost:3000 with sample data
-npm test                    # 42 tests
+npm test                    # 46 tests
 npm run generate            # rebuild api/_engine.js and sample data after editing src/
 npm run check               # tests + confirm generated files match src/
 ```
@@ -125,6 +128,7 @@ npm run check               # tests + confirm generated files match src/
 
 | What you see | Likely cause |
 |---|---|
+| Report says SerpAPI "run out of searches" | Your SerpAPI monthly allowance is used up. Wait for the reset, upgrade, or lower `MAX_CLAIM_SEARCHES` / `PLAGIARISM_PHRASES`. |
 | "Setup needed" at the top right | `GROQ_API_KEY` missing, or storage not connected. Add it, then redeploy. |
 | Report says "GROQ_API_KEY is not set" | The key was added but the site wasn't redeployed, or the name has a typo. |
 | "Groq rate limit reached (429)" | You hit Groq's per-minute or daily limit. Wait and run it again, raise `LLM_PAUSE_SECONDS`, or check usage at console.groq.com. |

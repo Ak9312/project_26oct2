@@ -23,7 +23,7 @@ function running() {
         <li>Asks the AI model on Groq to check each heading against its section and pull out factual claims</li>
         <li>Searches each claim and keeps only verdicts backed by a search result</li>
         <li>Compares your outline with the top-ranking pages for the keyword</li>
-        <li>Runs the Copyscape plagiarism check, then saves the result</li>
+        <li>Checks sample sentences for copies on other sites, then saves the result</li>
       </ol>
       <p class="muted" style="margin:0;font-size:13px">Audit ID <span class="mono">${esc(id)}</span></p>
     </section>`;
@@ -138,7 +138,7 @@ function render(r) {
       ${card('readability', 'Readability', R.score, 20, 'Grade ' + fmtNum(R.grade, 1) + ' · target ' + R.target_grade)}
       ${card('keywords', 'Keywords', K.score, 20, 'Density ' + fmtNum(K.density, 1) + '%')}
       ${card('sections', 'Missing sections', S.score, 20, S.competitor_count ? missing + ' subtopic' + (missing === 1 ? '' : 's') + ' missing or thin' : 'Not checked', missing > 0 || !S.competitor_count)}
-      ${card('plagiarism', 'Plagiarism', P.score, 10, P.checked ? fmtNum(P.percent, 1) + '% match' : 'Not checked', !P.checked || P.percent > 15)}
+      ${card('plagiarism', 'Plagiarism', P.score, 10, !P.checked ? 'Not checked' : P.method === 'phrase' ? P.phrases_found + ' of ' + P.phrases_checked + ' sentences found elsewhere' : fmtNum(P.percent, 1) + '% match', !P.checked || (P.method === 'phrase' ? P.phrases_found > 0 : P.percent > 15))}
     </div>
 
     <section class="card" id="accuracy">
@@ -208,13 +208,17 @@ function render(r) {
 
       <section class="card side" id="plagiarism">
         <h2>Plagiarism</h2>
-        ${P.checked ? `
+        ${!P.checked ? `<p class="form-error" style="margin:0">The plagiarism check didn't run${P.error ? ': ' + esc(P.error) : ''}. The article was sent to review.</p>`
+        : P.method === 'phrase' ? `
+          <div style="display:flex;align-items:baseline;gap:10px"><span class="mono" style="font-size:34px;font-weight:500">${P.phrases_found} / ${P.phrases_checked}</span><span class="muted">sentences found on other sites</span></div>
+          <div class="list-rows" style="margin-top:14px">${P.sources.length ? P.sources.map((s) => `<div><span><a href="${esc(s.url)}" target="_blank" rel="noopener" style="overflow-wrap:anywhere">${esc(s.title || s.url)}</a><span class="why" style="display:block;font-size:13px;color:var(--muted)">“${esc(s.phrase)}…”</span></span></div>`).join('') : '<div><span class="muted">None of the sampled sentences appear word-for-word elsewhere</span></div>'}</div>
+          <p class="muted" style="font-size:13px;margin:12px 0 0">Free check: ${P.phrases_checked} sentences from the article searched on Google in quotes. It catches copied passages, not reworded ones.</p>`
+        : `
           <div style="display:flex;align-items:baseline;gap:10px"><span class="mono" style="font-size:34px;font-weight:500">${fmtNum(P.percent, 1)}%</span><span class="muted">matched text</span></div>
           <div style="margin:12px 0 6px">${bar(Math.min(P.percent, 20), 20, 0)}</div>
           <div class="mono muted" style="display:flex;justify-content:space-between;font-size:12px"><span>0</span><span>5</span><span>10</span><span>15</span><span>20+</span></div>
-          <div class="list-rows" style="margin-top:14px">${P.sources.length ? P.sources.map((s) => `<div><a href="${esc(s.url)}" target="_blank" rel="noopener" style="overflow-wrap:anywhere">${esc(s.title || s.url)}</a><span class="muted">${s.percent !== null ? s.percent + '%' : (s.words || '?') + ' words'}</span></div>`).join('') : '<div><span class="muted">No matching pages found</span></div>'}</div>`
-        : `<p class="form-error" style="margin:0">The Copyscape check didn't run${P.error ? ': ' + esc(P.error) : ''}. The article was sent to review.</p>`}
-        <p class="muted" style="font-size:13px;margin:12px 0 0">Copyscape internet search, full comparison.</p>
+          <div class="list-rows" style="margin-top:14px">${P.sources.length ? P.sources.map((s) => `<div><a href="${esc(s.url)}" target="_blank" rel="noopener" style="overflow-wrap:anywhere">${esc(s.title || s.url)}</a><span class="muted">${s.percent !== null ? s.percent + '%' : (s.words || '?') + ' words'}</span></div>`).join('') : '<div><span class="muted">No matching pages found</span></div>'}</div>
+          <p class="muted" style="font-size:13px;margin:12px 0 0">Copyscape internet search, full comparison.</p>`}
       </section>
     </div>
 

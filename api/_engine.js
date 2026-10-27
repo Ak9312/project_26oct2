@@ -782,12 +782,26 @@ function sectionsBlock(article, competitors, topics, gapFailed) {
   };
 }
 
+// Free Google phrase check: points by how many sampled sentences were found
+// word-for-word on other sites. 0 found = 10, 1 = 5, 2 or more = 0.
+function phrasePoints(found) {
+  if (!Number.isFinite(found)) return null;
+  if (found <= 0) return 10;
+  if (found === 1) return 5;
+  return 0;
+}
+
 function plagiarismBlock(p) {
   const percent = p && p.checked && Number.isFinite(Number(p.percent)) ? Number(p.percent) : null;
-  const pts = percent === null ? null : plagiarismPoints(percent);
+  const phrase = Boolean(p && p.method === 'phrase');
+  const found = phrase && p.checked ? Number(p.phrases_found) || 0 : null;
+  const pts = percent === null ? null : phrase ? phrasePoints(found) : plagiarismPoints(percent);
   return {
     checked: percent !== null,
+    method: phrase ? 'phrase' : 'copyscape',
     percent,
+    phrases_checked: phrase ? Number(p.phrases_checked) || 0 : null,
+    phrases_found: found,
     sources: ((p && p.sources) || []).slice(0, 5),
     error: (p && p.error) || '',
     points: { match: pts },
@@ -810,7 +824,11 @@ function buildReport(ctx) {
   if (accuracy.claim_counts.false > 0) {
     flags.push({ code: 'false_claim', hard: true, message: accuracy.claim_counts.false + ' claim(s) contradicted by search results' });
   }
-  if (plagiarism.checked && plagiarism.percent > 15) {
+  if (plagiarism.checked && plagiarism.method === 'phrase' && plagiarism.phrases_found >= 2) {
+    flags.push({ code: 'plagiarism_phrases', hard: true, message: plagiarism.phrases_found + ' of ' + plagiarism.phrases_checked + ' sampled sentences were found word-for-word on other sites' });
+  } else if (plagiarism.checked && plagiarism.method === 'phrase' && plagiarism.phrases_found === 1) {
+    flags.push({ code: 'plagiarism_phrase', hard: false, message: '1 sampled sentence was found word-for-word on another site' });
+  } else if (plagiarism.checked && plagiarism.percent > 15) {
     flags.push({ code: 'plagiarism_over_15', hard: true, message: 'Plagiarism match ' + plagiarism.percent + '% (over 15%)' });
   }
   if (!plagiarism.checked) {
@@ -1032,6 +1050,89 @@ function rowsToObjects(values) {
   });
 }
 
+// ---- phrasecheck.js
+// Free plagiarism check: searches Google (through SerpAPI) for a few exact
+// sentences from the article. A sentence counts as found when another site's
+// result snippet contains a long run of the same words. This is a sample, not
+// a full scan: it catches copied passages, not light rewording.
+// Depends on text.js.
+
+function words(s) {
+  return tokenizeWords(String(s || '').toLowerCase());
+}
+
+function hostOfUrl(u) {
+  const m = String(u || '').match(/^https?:\/\/([^/?#]+)/i);
+  return m ? m[1].toLowerCase().replace(/^www\./, '') : '';
+}
+
+// Picks up to n distinctive sentences spread across the article.
+function pickPhrases(article, n) {
+  const count = Math.max(0, Math.min(6, Number(n) || 0));
+  if (!count) return [];
+  const sentences = splitSentences(article.body_text)
+    .map((s) => ({ s, w: tokenizeWords(s) }))
+    .filter((x) => x.w.length >= 10 && x.w.length <= 60)
+    // skip list-like or numeric-heavy lines that are common everywhere
+    .filter((x) => x.w.filter((t) => /^\d+$/.test(t)).length <= 3);
+  if (!sentences.length) return [];
+  const picks = [];
+  const step = sentences.length / count;
+  for (let i = 0; i < count && i * step < sentences.length; i++) {
+    // Middle of each slice, so the picks are spread through the article.
+    const best = sentences.slice(Math.floor(i * step), Math.max(Math.floor((i + 1) * step), Math.floor(i * step) + 1))
+      .sort((a, b) => b.w.length - a.w.length)[0];
+    if (best) picks.push(best.w.slice(0, 18).join(' '));
+  }
+  return Array.from(new Set(picks));
+}
+
+function longestSharedRun(a, b) {
+  // Longest run of consecutive words of a that appears in b (both word lists).
+  const bs = ' ' + b.join(' ') + ' ';
+  let best = 0;
+  for (let i = 0; i < a.length; i++) {
+    for (let j = a.length; j > i + best; j--) {
+      if (bs.indexOf(' ' + a.slice(i, j).join(' ') + ' ') >= 0) { best = j - i; break; }
+    }
+  }
+  return best;
+}
+
+// serp: SerpAPI JSON for the quoted phrase. Returns matching pages.
+function phraseMatches(serp, phrase, ownUrl) {
+  const own = hostOfUrl(ownUrl);
+  const pw = words(phrase);
+  const need = Math.min(8, Math.max(6, Math.floor(pw.length * 0.5)));
+  const rows = serp && Array.isArray(serp.organic_results) ? serp.organic_results : [];
+  return rows
+    .filter((r) => r && typeof r.link === 'string' && (!own || hostOfUrl(r.link) !== own))
+    .filter((r) => longestSharedRun(pw, words(r.snippet)) >= need)
+    .slice(0, 3)
+    .map((r) => ({ url: r.link, title: collapseWhitespace(r.title), phrase }));
+}
+
+function summarizePhraseCheck(results, phrases) {
+  const done = results.filter((r) => !r.error);
+  if (!done.length) {
+    const err = (results.find((r) => r.error) || {}).error || 'no sentences long enough to check';
+    return { checked: false, method: 'phrase', percent: null, sources: [], error: 'Google phrase check did not run (' + String(err).slice(0, 120) + ')' };
+  }
+  const found = done.filter((r) => r.matches.length);
+  const sources = [];
+  found.forEach((r) => r.matches.forEach((m) => { if (sources.length < 5 && !sources.some((s) => s.url === m.url)) sources.push({ url: m.url, title: m.title, phrase: m.phrase, percent: null, words: null }); }));
+  return {
+    checked: true,
+    method: 'phrase',
+    phrases_checked: done.length,
+    phrases_found: found.length,
+    percent: Math.round((found.length / done.length) * 100),
+    sources,
+    error: '',
+    phrases: phrases.slice(0, done.length),
+  };
+}
+
 // ---- appdata.js
 // App data: one index of audit summaries (plus each audit's review and
 // validation scores) drives the audit list, review queue, validation page
@@ -1222,7 +1323,7 @@ function toCsv(index) {
 // Function (Hobby plan allows 5 minutes), so every step watches a deadline
 // and a failed step is recorded instead of stopping the audit.
 // Depends on text.js, parse.js, readability.js, keywords.js, llm.js,
-// scoring.js, input.js and external.js. Network access and timers come in
+// scoring.js, input.js, external.js and phrasecheck.js. Network access and timers come in
 // through `deps` so the tests can run it without the internet.
 
 const AUDIT_UA = 'Mozilla/5.0 (compatible; ContentQualityAuditor/1.0; +https://github.com/Ak9312/project_26oct2)';
@@ -1257,9 +1358,13 @@ function auditConfig(env) {
     pauseSeconds: num(e.LLM_PAUSE_SECONDS, 15),
     passMark: num(e.PASS_MARK, 70),
     competitorPages: Math.min(10, Math.max(1, num(e.COMPETITOR_PAGES, 6))),
-    serpKey: (e.SERPAPI_KEY || '').trim(),
-    copyscapeUser: (e.COPYSCAPE_USERNAME || '').trim(),
-    copyscapeKey: (e.COPYSCAPE_API_KEY || '').trim(),
+    serpKey: cleanKey(e.SERPAPI_KEY),
+    copyscapeUser: cleanKey(e.COPYSCAPE_USERNAME),
+    copyscapeKey: cleanKey(e.COPYSCAPE_API_KEY),
+    // SerpAPI's free plan is small (about 250 searches a month), so each
+    // audit uses at most: claims searched + 1 keyword search + phrases.
+    maxClaimSearches: Math.min(8, Math.max(0, num(e.MAX_CLAIM_SEARCHES, 5))),
+    plagiarismPhrases: Math.min(6, Math.max(0, num(e.PLAGIARISM_PHRASES, 3))),
     deadlineMs: num(e.AUDIT_DEADLINE_MS, 270000),
   };
 }
@@ -1331,10 +1436,25 @@ async function serpSearch(deps, cfg, q, inp, num) {
   return { json: r.json, error: '' };
 }
 
+// Free check through SerpAPI: exact-sentence Google searches.
+async function phraseCheck(deps, cfg, article, inp) {
+  const phrases = pickPhrases(article, cfg.plagiarismPhrases);
+  if (!phrases.length) return { checked: false, method: 'phrase', percent: null, sources: [], error: 'no sentences long enough to check' };
+  const results = await Promise.all(phrases.map(async (ph) => {
+    const s = await serpSearch(deps, cfg, '"' + ph + '"', inp, 10);
+    return s.error ? { error: s.error, matches: [] } : { error: '', matches: phraseMatches(s.json, ph, inp.url) };
+  }));
+  return summarizePhraseCheck(results, phrases);
+}
+
+// Copyscape if its keys are set; otherwise the free Google phrase check.
+async function plagiarismCheck(deps, cfg, article, inp) {
+  if (cfg.copyscapeUser && cfg.copyscapeKey) return copyscapeCheck(deps, cfg, [article.h1, article.body_text].join('\n'));
+  if (cfg.serpKey && cfg.plagiarismPhrases > 0) return phraseCheck(deps, cfg, article, inp);
+  return { checked: false, percent: null, sources: [], error: 'needs SERPAPI_KEY (free Google phrase check) or Copyscape keys' };
+}
+
 async function copyscapeCheck(deps, cfg, text) {
-  if (!cfg.copyscapeUser || !cfg.copyscapeKey) {
-    return { checked: false, percent: null, sources: [], error: 'Copyscape is not set up (add COPYSCAPE_USERNAME and COPYSCAPE_API_KEY in Vercel)' };
-  }
   // Raw POST: every parameter except the text goes in the URL.
   const url = 'https://www.copyscape.com/api/?' + [
     ['u', cfg.copyscapeUser], ['k', cfg.copyscapeKey], ['o', 'csearch'], ['e', 'UTF-8'], ['c', '3'], ['f', 'json'],
@@ -1378,6 +1498,8 @@ async function runAudit(job, cfg, deps) {
   // 2. Groq: relevancy, claims, related terms, intent
   const a = await callGroq(deps, cfg, buildAnalysisPrompt(article, inp, cfg.maxPromptChars), 2500, timeLeft);
   const analysis = normalizeAnalysis(a.data, article);
+  // Only the first few claims are searched, to save SerpAPI searches.
+  analysis.claims = analysis.claims.slice(0, cfg.maxClaimSearches);
   if (a.error) errors.push('Article analysis: ' + a.error);
   const keywords = analyzeKeywords(article, inp.keyword, inp.secondary, analysis.related_terms, analysis.intent);
 
@@ -1424,7 +1546,7 @@ async function runAudit(job, cfg, deps) {
 
   // 5. Plagiarism
   const plagiarism = timeLeft() > 30000
-    ? await copyscapeCheck(deps, cfg, [article.h1, article.body_text].join('\n'))
+    ? await plagiarismCheck(deps, cfg, article, inp)
     : { checked: false, percent: null, sources: [], error: 'skipped to stay inside the 5-minute limit' };
 
   return buildReport({

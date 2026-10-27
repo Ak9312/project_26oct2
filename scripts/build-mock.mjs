@@ -87,7 +87,7 @@ const samples = [
     verify: [{ i: 0, status: 'verified', source_url: 'https://example.org/desk-ergonomics', evidence: 'Ergonomics guidance matches' }],
     gap: [{ subtopic: 'Desk height', found_in: 8, coverage: 'covered' }, { subtopic: 'Electric vs manual', found_in: 7, coverage: 'covered' }, { subtopic: 'Cable management', found_in: 4, coverage: 'missing' }],
     competitorWords: [900, 1100, 1000, 1200, 950],
-    copyscape: { querywords: 200, count: 0 },
+    plagiarism: { checked: true, method: 'phrase', phrases_checked: 3, phrases_found: 0, percent: 0, sources: [], error: '' },
   },
 ];
 
@@ -107,7 +107,7 @@ function report(s) {
     verification: L.normalizeVerification({ claims: s.verify }, items),
     competitors: s.competitorWords.map((w, i) => ({ url: 'https://competitor' + (i + 1) + '.example/' + s.id, title: 'Competitor ' + (i + 1), word_count: w, headings: [] })),
     gap: L.normalizeGap({ topics: s.gap }, s.competitorWords.length),
-    plagiarism: L.parseCopyscape(s.copyscape),
+    plagiarism: s.plagiarism || L.parseCopyscape(s.copyscape),
     config: { pass_mark: 70, model: 'openai/gpt-oss-120b on Groq (sample)' },
   });
 }
