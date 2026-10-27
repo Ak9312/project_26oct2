@@ -16,6 +16,9 @@ export default defineConfig({
     outDir: '../dist',
     emptyOutDir: true,
     chunkSizeWarningLimit: 900,
+    // Keep every asset (fonts included) as a file: the site's security
+    // policy allows fonts only from its own origin, not data: URLs.
+    assetsInlineLimit: 0,
   },
   server: {
     proxy: { '/api': 'http://localhost:3000' },
