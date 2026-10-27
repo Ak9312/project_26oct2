@@ -1,4 +1,5 @@
-// Prompt builders and strict normalisers for the three LLM calls.
+// Prompt builders and strict normalisers for the three LLM calls, sent to
+// Groq's OpenAI-compatible Chat Completions API.
 // Every LLM answer is treated as untrusted: shapes are checked, numbers are
 // clamped, and anything the model cannot back up is downgraded.
 // Depends on text.js.
@@ -8,14 +9,28 @@ const SYSTEM_PROMPT =
   'Judge only what is in the material you are given. Never invent facts, sources, URLs or numbers. ' +
   'When you are not sure, say so in the note and give the lower score.';
 
-export function anthropicBody(model, userPrompt, maxTokens) {
-  return {
+export const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
+
+// Groq Chat Completions body. JSON mode guarantees syntactically valid JSON
+// (the prompt must ask for JSON, which ours do). gpt-oss models are
+// reasoning models: effort low/medium/high, reasoning text hidden.
+export function groqBody(model, userPrompt, maxTokens, reasoningEffort) {
+  const body = {
     model: model,
-    max_tokens: maxTokens || 4000,
-    temperature: 0,
-    system: SYSTEM_PROMPT,
-    messages: [{ role: 'user', content: userPrompt }],
+    messages: [
+      { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'user', content: userPrompt },
+    ],
+    response_format: { type: 'json_object' },
+    max_completion_tokens: maxTokens || 2000,
   };
+  if (/^openai\/gpt-oss/.test(String(model))) {
+    body.reasoning_effort = ['low', 'medium', 'high'].indexOf(reasoningEffort) >= 0 ? reasoningEffort : 'low';
+    body.include_reasoning = false;
+  } else {
+    body.temperature = 0;
+  }
+  return body;
 }
 
 export function extractJson(text) {
@@ -27,9 +42,42 @@ export function extractJson(text) {
   return JSON.parse(s.slice(start, end + 1));
 }
 
-export function anthropicText(response) {
-  const blocks = (response && response.content) || [];
-  return blocks.filter((b) => b && b.type === 'text').map((b) => b.text).join('');
+export function llmText(response) {
+  const choice = response && Array.isArray(response.choices) ? response.choices[0] : null;
+  const content = choice && choice.message ? choice.message.content : '';
+  return typeof content === 'string' ? content : '';
+}
+
+// Returns null when the reply is usable, otherwise a plain-language reason.
+// n8n puts failed HTTP calls in `error` when the node continues on error.
+export function llmFailure(response) {
+  if (response && Array.isArray(response.choices) && response.choices.length) {
+    const c = response.choices[0];
+    if (c.finish_reason === 'length' && !llmText(response).trim()) {
+      return 'Groq stopped before writing an answer (token limit). Raise the max tokens or lower MAX_PROMPT_CHARS.';
+    }
+    if (!llmText(response).trim()) return 'Groq returned an empty answer.';
+    return null;
+  }
+  const e = response && response.error ? response.error : {};
+  const raw = [e.message, e.description, e.httpCode, typeof e === 'string' ? e : '']
+    .filter(Boolean).map(String).join(' ');
+  if (/\b429\b|rate.?limit|too many requests/i.test(raw)) {
+    return 'Groq rate limit reached (429). Wait a minute and run the audit again, raise LLM_PAUSE_SECONDS, or check your limits at console.groq.com/settings/limits.';
+  }
+  if (/\b413\b|too large|context length|reduce the length/i.test(raw)) {
+    return "The prompt was too large for your Groq plan's tokens-per-minute limit (413). Lower MAX_PROMPT_CHARS in the Config node.";
+  }
+  if (/\b401\b|invalid api key|unauthori[sz]ed/i.test(raw)) {
+    return 'Groq rejected the API key (401). Check the "Groq account" credential in n8n.';
+  }
+  if (/\b404\b|model.*(not found|does not exist|decommissioned)/i.test(raw)) {
+    return 'Groq does not recognise the model in the Config node (404). Pick one from console.groq.com/docs/models.';
+  }
+  if (/\b5\d\d\b|timeout|ECONN|ETIMEDOUT|socket/i.test(raw)) {
+    return 'Groq did not respond in time. Try again in a few minutes.';
+  }
+  return 'Groq request failed' + (raw ? ': ' + raw.slice(0, 160) : '.');
 }
 
 function cut(s, n) {
@@ -41,19 +89,31 @@ function str(v, n) {
   return cut(collapseWhitespace(typeof v === 'string' ? v : ''), n || 200);
 }
 
+// Splits a character budget across the intro and sections so a long
+// article still fits one request on Groq's free plan (about 8,000 tokens
+// per minute; roughly 4 characters per token).
+export function budgetArticle(article, maxChars) {
+  const budget = Math.max(2000, Number(maxChars) || 14000);
+  const secs = article.sections.slice(0, 25);
+  const parts = 1 + secs.length;
+  const per = Math.max(200, Math.floor(budget / parts));
+  return {
+    intro: cut(article.intro, per),
+    sections: secs.map((s, i) => ({ index: i, heading: s.heading, text: cut(s.text, per) })),
+    truncated: article.intro.length > per || secs.some((s) => s.text.length > per) || article.sections.length > 25,
+  };
+}
+
 // ---------- Call A: relevancy, title promise, freshness, claims, terms, intent
 
-export function buildAnalysisPrompt(article, input) {
-  const sections = article.sections.slice(0, 25).map((s, i) => ({
-    index: i,
-    heading: s.heading,
-    text: cut(s.text, 1500),
-  }));
+export function buildAnalysisPrompt(article, input, maxChars) {
+  const b = budgetArticle(article, maxChars);
+  const sections = b.sections;
   const payload = {
     title: article.title,
     h1: article.h1,
     meta_description: article.meta_description,
-    intro: cut(article.intro, 1500),
+    intro: b.intro,
     sections,
     primary_keyword: input.keyword,
     secondary_keywords: input.secondary,
@@ -131,7 +191,7 @@ export function buildVerifyPrompt(items) {
   const payload = items.map((it, i) => ({
     i,
     claim: it.claim,
-    search_results: (it.results || []).slice(0, 5).map((r) => ({ url: r.url, title: r.title, snippet: r.snippet })),
+    search_results: (it.results || []).slice(0, 3).map((r) => ({ url: r.url, title: cut(r.title, 120), snippet: cut(r.snippet, 240) })),
   }));
   return [
     'For each claim, decide whether the search results below support it. Use ONLY these results, not your own knowledge.',
@@ -172,7 +232,7 @@ export function minPagesFor(competitorCount) {
 
 export function buildGapPrompt(article, competitors, keyword) {
   const own = article.sections.map((s) => (s.level === 3 ? '  - ' : '- ') + s.heading + ' (' + s.word_count + ' words)');
-  const comp = competitors.slice(0, 10).map((c, i) => ({ page: i + 1, title: c.title, headings: c.headings.slice(0, 40) }));
+  const comp = competitors.slice(0, 10).map((c, i) => ({ page: i + 1, title: cut(c.title, 100), headings: c.headings.slice(0, 25).map((h) => cut(h, 90)) }));
   const minPages = minPagesFor(competitors.length);
   return [
     'Compare an article\'s outline with the outlines of the top-ranking pages for "' + keyword + '".',

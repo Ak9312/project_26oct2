@@ -46,9 +46,10 @@ export function buildAlertEmail(report, to, appUrl) {
     ['Missing sections', p.sections.score, 20],
     ['Plagiarism', p.plagiarism.score, 10],
   ];
+  const failed = report.status === 'error';
   const html = [
     '<div style="font-family:Arial,sans-serif;font-size:15px;color:#15171C">',
-    '<p>An article needs your review.</p>',
+    '<p>' + (failed ? "An audit couldn't finish every check. Its scores are incomplete." : 'An article needs your review.') + '</p>',
     '<p style="font-size:18px;margin:0 0 4px"><b>' + esc(title) + '</b></p>',
     report.article.url ? '<p style="margin:0 0 12px"><a href="' + esc(report.article.url) + '">' + esc(report.article.url) + '</a></p>' : '',
     '<p style="font-size:16px">Score: <b>' + report.total + '/100</b> (pass mark ' + report.pass_mark + ')</p>',
@@ -58,7 +59,7 @@ export function buildAlertEmail(report, to, appUrl) {
     '<p style="color:#5B5F68;font-size:13px">Audit ' + esc(report.audit_id) + '</p>',
     '</div>',
   ].join('');
-  const subject = 'Review needed: ' + title + ' (' + report.total + '/100)';
+  const subject = (failed ? 'Audit incomplete: ' : 'Review needed: ') + title + ' (' + report.total + '/100)';
   const mime = [
     'To: ' + to,
     'Subject: =?UTF-8?B?' + base64Encode(subject) + '?=',

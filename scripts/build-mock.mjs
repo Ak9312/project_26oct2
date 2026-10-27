@@ -10,7 +10,7 @@ import { inlineSources, loadSources } from './inline.mjs';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const FILES = ['text.js', 'parse.js', 'readability.js', 'keywords.js', 'llm.js', 'scoring.js', 'input.js', 'external.js', 'api.js'];
 const L = loadSources(FILES, ['parsePasted', 'analyzeReadability', 'analyzeKeywords', 'normalizeAnalysis', 'normalizeVerification',
-  'normalizeGap', 'buildReport', 'resultsRow', 'reviewRow', 'normalizeInput', 'parseCopyscape', 'RESULTS_COLUMNS', 'REVIEW_COLUMNS', 'VALIDATION_COLUMNS']);
+  'normalizeGap', 'buildReport', 'buildErrorReport', 'resultsRow', 'reviewRow', 'normalizeInput', 'parseCopyscape', 'RESULTS_COLUMNS', 'REVIEW_COLUMNS', 'VALIDATION_COLUMNS']);
 
 const samples = [
   {
@@ -108,13 +108,20 @@ function report(s) {
     competitors: s.competitorWords.map((w, i) => ({ url: 'https://competitor' + (i + 1) + '.example/' + s.id, title: 'Competitor ' + (i + 1), word_count: w, headings: [] })),
     gap: L.normalizeGap({ topics: s.gap }, s.competitorWords.length),
     plagiarism: L.parseCopyscape(s.copyscape),
-    config: { pass_mark: 70, model: 'claude-sonnet-5-5 (sample)' },
+    config: { pass_mark: 70, model: 'openai/gpt-oss-120b on Groq (sample)' },
   });
 }
 
 const reports = samples.map(report);
+const failed = L.buildErrorReport({
+  audit_id: 'aud_sample_failed',
+  created_at: '2026-10-26T09:20:00Z',
+  input: L.normalizeInput({ url: 'https://blocked.example.com/guide', keyword: 'sample blocked page', market: 'in-en' }).input,
+  error: "Couldn't fetch https://blocked.example.com/guide (Request failed with status code 403). The site may block automated requests; paste the content instead.",
+  config: { pass_mark: 70, model: 'openai/gpt-oss-120b on Groq (sample)' },
+});
 const sheets = {
-  Results: [L.RESULTS_COLUMNS].concat(reports.map((r) => L.resultsRow(r))),
+  Results: [L.RESULTS_COLUMNS].concat(reports.map((r) => L.resultsRow(r)), [L.resultsRow(failed)]),
   Review: [L.REVIEW_COLUMNS].concat(reports.filter((r) => r.status === 'needs_review').map((r) => L.reviewRow(r))),
   Validation: [L.VALIDATION_COLUMNS],
 };

@@ -66,13 +66,14 @@ function accuracyBlock(analysis, verification) {
   };
 }
 
-function sectionsBlock(article, competitors, topics) {
+function sectionsBlock(article, competitors, topics, gapFailed) {
   const usable = competitors.filter((c) => c.word_count >= 200);
   const med = median(usable.map((c) => c.word_count));
   const ratio = med ? article.word_count / med : NaN;
 
   let coverage = null;
-  if (competitors.length) {
+  // If the AI step failed, coverage is unknown: no points, never full marks.
+  if (competitors.length && !gapFailed) {
     if (!topics.length) coverage = 12;
     else {
       const covered = topics.filter((t) => t.coverage === 'covered').length;
@@ -124,7 +125,7 @@ export function buildReport(ctx) {
   const accuracy = accuracyBlock(ctx.analysis, ctx.verification || []);
   const readability = ctx.readability;
   const keywords = ctx.keywords;
-  const sections = sectionsBlock(ctx.article, ctx.competitors || [], ctx.gap || []);
+  const sections = sectionsBlock(ctx.article, ctx.competitors || [], ctx.gap || [], ctx.gap_failed === true);
   const plagiarism = plagiarismBlock(ctx.plagiarism);
 
   const total = accuracy.score + readability.score + keywords.score + sections.score + plagiarism.score;
@@ -145,19 +146,26 @@ export function buildReport(ctx) {
   if (!ctx.article.sections.length) {
     flags.push({ code: 'no_sections', hard: false, message: 'No H2/H3 headings found' });
   }
+  if (ctx.prompt_truncated) {
+    flags.push({ code: 'prompt_truncated', hard: false, message: 'Long article: each section was shortened before it was sent to the AI (MAX_PROMPT_CHARS)' });
+  }
   if (accuracy.claim_counts.unverified > 0) {
     flags.push({ code: 'unverified_claims', hard: false, message: accuracy.claim_counts.unverified + ' claim(s) could not be verified' });
   }
   (ctx.errors || []).forEach((e) => flags.push({ code: 'step_error', hard: true, message: String(e).slice(0, 200) }));
 
   const reasons = [];
+  if (ctx.analysis_failed) reasons.push('AI analysis did not run, so accuracy and intent scores are incomplete');
   if (total < passMark) reasons.push('Total ' + total + ' is below ' + passMark);
   flags.filter((f) => f.hard).forEach((f) => reasons.push(f.message));
+
+  let status = reasons.length ? 'needs_review' : 'passed';
+  if (ctx.analysis_failed) status = 'error';
 
   return {
     audit_id: ctx.audit_id,
     created_at: ctx.created_at,
-    status: reasons.length ? 'needs_review' : 'passed',
+    status,
     pass_mark: passMark,
     total,
     review_reasons: reasons,
@@ -185,7 +193,7 @@ export function buildReport(ctx) {
 // Sheets cells hold at most 50,000 characters; keep a margin.
 export function compactReportJson(report) {
   let json = JSON.stringify(report);
-  if (json.length <= 45000) return json;
+  if (json.length <= 45000 || !report.parameters) return json.slice(0, 45000);
   const r = JSON.parse(json);
   r.parameters.sections.competitors = [];
   r.parameters.accuracy.sections = r.parameters.accuracy.sections.slice(0, 15);
@@ -196,7 +204,32 @@ export function compactReportJson(report) {
   return JSON.stringify(r).slice(0, 45000);
 }
 
+// For audits that stop before scoring (article could not be fetched or read).
+export function buildErrorReport(ctx) {
+  return {
+    audit_id: ctx.audit_id,
+    created_at: ctx.created_at,
+    status: 'error',
+    error: String(ctx.error || 'The audit could not finish.').slice(0, 500),
+    pass_mark: Number(ctx.config && ctx.config.pass_mark) || 70,
+    total: null,
+    review_reasons: [String(ctx.error || 'The audit could not finish.').slice(0, 300)],
+    flags: [],
+    model: (ctx.config && ctx.config.model) || '',
+    article: { title: ctx.input.heading || ctx.input.url || '', h1: '', url: ctx.input.url || '', source: ctx.input.url ? 'url' : 'paste', word_count: 0, meta_description: '' },
+    input: { keyword: ctx.input.keyword, secondary: ctx.input.secondary, target_grade: ctx.input.target_grade, market_label: ctx.input.market_label },
+    parameters: null,
+  };
+}
+
 export function resultsRow(report) {
+  if (!report.parameters) {
+    return [
+      report.audit_id, report.created_at, report.status, report.article.title, report.article.url,
+      report.input.keyword, '', '', '', '', '', '', report.review_reasons.join(' | '), report.model,
+      compactReportJson(report),
+    ];
+  }
   const p = report.parameters;
   return [
     report.audit_id, report.created_at, report.status, report.article.title, report.article.url,

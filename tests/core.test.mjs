@@ -240,3 +240,38 @@ test('validation metrics', () => {
   assert.equal(v.by_param[0].n, 2);
   assert.equal(v.by_param[0].bias, ((25 - 22) + (18 - 20)) / 2);
 });
+
+const llm = loadSources(['text.js', 'llm.js'], ['groqBody', 'llmFailure', 'llmText', 'budgetArticle']);
+
+test('Groq body: gpt-oss gets reasoning settings, other models get temperature 0', () => {
+  const a = llm.groqBody('openai/gpt-oss-120b', 'Return JSON', 1500, 'high');
+  assert.equal(a.reasoning_effort, 'high');
+  assert.equal(a.include_reasoning, false);
+  assert.equal(a.temperature, undefined);
+  assert.equal(a.max_completion_tokens, 1500);
+  assert.equal(llm.groqBody('openai/gpt-oss-20b', 'x', 10, 'bogus').reasoning_effort, 'low');
+  const b = llm.groqBody('llama-3.3-70b-versatile', 'x', 10, 'low');
+  assert.equal(b.reasoning_effort, undefined);
+  assert.equal(b.include_reasoning, undefined);
+  assert.equal(b.temperature, 0);
+  assert.deepEqual(b.response_format, { type: 'json_object' });
+});
+
+test('Groq failures become plain-language reasons', () => {
+  assert.equal(llm.llmFailure({ choices: [{ message: { content: '{"a":1}' } }] }), null);
+  assert.match(llm.llmFailure({ error: { message: 'Request failed with status code 429' } }), /rate limit/);
+  assert.match(llm.llmFailure({ error: { message: '413 Request too large for model' } }), /MAX_PROMPT_CHARS/);
+  assert.match(llm.llmFailure({ error: { message: '401 Invalid API Key' } }), /credential/);
+  assert.match(llm.llmFailure({ error: { message: 'The model `x` does not exist', httpCode: '404' } }), /model/);
+  assert.match(llm.llmFailure({ choices: [{ finish_reason: 'length', message: { content: '' } }] }), /token limit/);
+  assert.match(llm.llmFailure({}), /Groq request failed/);
+});
+
+test('article budget splits characters across sections', () => {
+  const article = { intro: 'i'.repeat(5000), sections: Array.from({ length: 4 }, (_, k) => ({ heading: 'H' + k, text: 's'.repeat(9000) })) };
+  const b = llm.budgetArticle(article, 10000);
+  assert.equal(b.truncated, true);
+  const total = b.intro.length + b.sections.reduce((n, s) => n + s.text.length, 0);
+  assert.ok(total <= 10000 + 5 * 4, 'total ' + total);
+  assert.equal(llm.budgetArticle({ intro: 'short', sections: [{ heading: 'a', text: 'b' }] }, 14000).truncated, false);
+});

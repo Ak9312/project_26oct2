@@ -80,7 +80,7 @@ async function loadRecent() {
         <tr>
           <td><a href="/report.html?id=${encodeURIComponent(a.audit_id)}" style="text-decoration:none;font-weight:500">${esc(a.title || a.url || a.audit_id)}</a></td>
           <td style="color:var(--ink-2)">${esc(a.keyword)}</td>
-          <td class="mono" style="font-weight:500">${esc(a.total)}</td>
+          <td class="mono" style="font-weight:500">${a.total === null ? '—' : esc(a.total)}</td>
           <td>${statusPill(a.status)}</td>
           <td class="muted">${fmtDate(a.created_at)}</td>
         </tr>`).join('')}</tbody></table></div>`;

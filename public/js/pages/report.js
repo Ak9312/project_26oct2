@@ -20,7 +20,7 @@ function running() {
       <p class="muted" style="margin:0">This page updates by itself. The workflow:</p>
       <ol class="steps">
         <li>Reads the article and scores readability</li>
-        <li>Has Claude check each heading against its section and pull out factual claims</li>
+        <li>Asks the AI model on Groq to check each heading against its section and pull out factual claims</li>
         <li>Searches each claim and keeps only verdicts backed by a search result</li>
         <li>Compares your outline with the top-ranking pages for the keyword</li>
         <li>Runs the Copyscape plagiarism check, then saves the result to your Sheet</li>
@@ -82,15 +82,29 @@ function claimPill(status) {
   return '<span class="pill neutral">Unverified</span>';
 }
 
+// The article couldn't be fetched or read, so nothing was scored.
+function renderFailed(rep) {
+  document.title = 'Audit failed · Content Auditor';
+  box.innerHTML = `
+    <section class="card" role="alert">
+      <span class="muted" style="font-size:13px">${fmtDate(rep.created_at)} · audit <span class="mono">${esc(rep.audit_id)}</span></span>
+      <h1 style="margin:6px 0 12px;font-size:24px;font-weight:600">The audit couldn't run</h1>
+      <p class="form-error" style="margin:0 0 16px">${esc(rep.error)}</p>
+      <div class="actions"><a class="btn primary" href="/">Try again</a></div>
+    </section>`;
+}
+
 function render(r) {
   const rep = r.report;
+  if (!rep.parameters) return renderFailed(rep);
   const p = rep.parameters;
   const A = p.accuracy;
   const R = p.readability;
   const K = p.keywords;
   const S = p.sections;
   const P = p.plagiarism;
-  const needs = rep.status === 'needs_review';
+  const failed = rep.status === 'error';
+  const needs = rep.status === 'needs_review' || failed;
   document.title = (rep.article.title || 'Audit report') + ' · Content Auditor';
 
   const missing = S.topics.filter((t) => t.coverage !== 'covered').length;
@@ -107,7 +121,7 @@ function render(r) {
           <span class="pill neutral">Target grade ${esc(rep.input.target_grade)}</span>
         </div>
         <div class="verdict ${needs ? 'warn' : 'ok'}">
-          ${needs ? `<b style="font-weight:600">Sent to human review.</b><ul>${rep.review_reasons.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>`
+          ${needs ? `<b style="font-weight:600">${failed ? "Audit incomplete: a step couldn't run, so these scores are partial. It was sent to human review." : 'Sent to human review.'}</b><ul>${rep.review_reasons.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>`
                  : '<b style="font-weight:600">Passed.</b> No hard flags and the total is at or above the pass mark.'}
         </div>
       </div>

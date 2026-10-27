@@ -12,6 +12,7 @@ function makeRunner(wf, mocks) {
   const runData = {};
   const calls = [];
   const responses = [];
+  const pauses = [];
 
   const $ = (name) => {
     const items = runData[name];
@@ -76,6 +77,13 @@ function makeRunner(wf, mocks) {
     let outputs;
     switch (node.type) {
       case 'n8n-nodes-base.webhook': outputs = [items]; break;
+      case 'n8n-nodes-base.wait': {
+        const secs = evalExpr(node.parameters.amount, items[0]);
+        if (!(typeof secs === 'number' && secs >= 1)) throw new Error(name + ': pause must be a number >= 1, got ' + secs);
+        pauses.push(secs);
+        outputs = [items];
+        break;
+      }
       case 'n8n-nodes-base.code': outputs = [await runCode(node, items)]; break;
       case 'n8n-nodes-base.httpRequest': outputs = [await runHttp(node, items)]; break;
       case 'n8n-nodes-base.respondToWebhook':
@@ -98,10 +106,10 @@ function makeRunner(wf, mocks) {
     }
   }
 
-  return { execute, runData, calls, responses };
+  return { execute, runData, calls, responses, pauses };
 }
 
-const anthropicReply = (obj) => ({ content: [{ type: 'text', text: JSON.stringify(obj) }] });
+const groqReply = (obj) => ({ choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content: JSON.stringify(obj) } }] });
 
 const ARTICLE = [
   'Composting at home turns kitchen scraps into rich soil for your garden. ' + 'It is simple and cheap. '.repeat(10),
@@ -118,10 +126,16 @@ const ARTICLE = [
 function auditMocks(over) {
   return Object.assign({
     'Fetch article': () => { throw new Error('should not fetch for pasted content'); },
-    'Claude: analyse article': (req) => {
-      assert.equal(req.body.model, 'claude-sonnet-5-5');
-      assert.match(req.body.messages[0].content, /What is composting/);
-      return anthropicReply({
+    'Groq: analyse article': (req) => {
+      assert.equal(req.url, 'https://api.groq.com/openai/v1/chat/completions');
+      assert.equal(req.body.model, 'openai/gpt-oss-120b');
+      assert.deepEqual(req.body.response_format, { type: 'json_object' });
+      assert.equal(req.body.reasoning_effort, 'low');
+      assert.equal(req.body.include_reasoning, false);
+      assert.equal(req.body.max_completion_tokens, 2500);
+      assert.equal(req.body.messages[0].role, 'system');
+      assert.match(req.body.messages[1].content, /What is composting/);
+      return groqReply({
         sections: [{ index: 0, score: 9 }, { index: 1, score: 8 }, { index: 2, score: 5, note: 'drifts' }, { index: 3, score: 7 }],
         title_promise: { score: 3 }, freshness: { score: 5 },
         claims: [
@@ -135,10 +149,10 @@ function auditMocks(over) {
     'SerpAPI: search each claim': (req) => ({
       organic_results: [{ link: 'https://src.example/' + encodeURIComponent(req.query.q), title: 'Source', snippet: 'info' }],
     }),
-    'Claude: verify claims': (req) => {
-      const items = JSON.parse(req.body.messages[0].content.split('<results>\n')[1].split('\n</results>')[0]);
+    'Groq: verify claims': (req) => {
+      const items = JSON.parse(req.body.messages[1].content.split('<results>\n')[1].split('\n</results>')[0]);
       assert.equal(items.length, 2);
-      return anthropicReply({ claims: [
+      return groqReply({ claims: [
         { i: 0, status: 'false', source_url: items[0].search_results[0].url, evidence: 'Not in standard bins' },
         { i: 1, status: 'verified', source_url: items[1].search_results[0].url },
       ] });
@@ -152,7 +166,7 @@ function auditMocks(over) {
       data: '<html><title>' + req.url + '</title><body><article><h1>Guide</h1><p>' + 'word '.repeat(900) + '</p>' +
         '<h2>What to compost</h2><p>x</p><h2>Troubleshooting smells</h2><p>y</p><h2>FAQ</h2><p>z</p></article></body></html>',
     }),
-    'Claude: section gaps': () => anthropicReply({ topics: [
+    'Groq: section gaps': () => groqReply({ topics: [
       { subtopic: 'Troubleshooting smells', found_in: 3, coverage: 'missing' },
       { subtopic: 'What to compost', found_in: 3, coverage: 'thin' },
     ] }),
@@ -165,6 +179,7 @@ function auditMocks(over) {
     },
     'Sheets: add to Results': (req) => { assert.match(req.url, /spreadsheets\/PASTE_YOUR_GOOGLE_SHEET_ID\/values\/Results!A1:append$/); return { updates: {} }; },
     'Sheets: add to Review': () => ({ updates: {} }),
+    'Sheets: add failed audit': (req) => { assert.match(req.url, /values\/Results!A1:append$/); return { updates: {} }; },
     'Gmail: email reviewer': () => ({ id: 'msg1' }),
   }, over || {});
 }
@@ -199,12 +214,12 @@ test('audit workflow: pasted article runs end to end and goes to review', async 
 test('audit workflow: clean article passes and skips the review branch', async () => {
   const wf = load('content-auditor-audit.json');
   const mocks = auditMocks({
-    'Claude: analyse article': () => anthropicReply({
+    'Groq: analyse article': () => groqReply({
       sections: [0, 1, 2, 3].map((i) => ({ index: i, score: 10 })), title_promise: { score: 3 }, freshness: { score: 5 },
       claims: [], related_terms: ['compost bin'], intent: { score: 4 },
     }),
-    'Claude: verify claims': () => { throw new Error('should not verify when there are no claims'); },
-    'Claude: section gaps': () => anthropicReply({ topics: [] }),
+    'Groq: verify claims': () => { throw new Error('should not verify when there are no claims'); },
+    'Groq: section gaps': () => groqReply({ topics: [] }),
     'Copyscape: plagiarism': () => ({ querywords: 120, count: 0 }),
   });
   const r = makeRunner(wf, mocks);
@@ -287,4 +302,76 @@ test('api workflow: list and review_save', async () => {
   await r.execute('App request', [{ json: { body: { action: 'list' } } }]);
   assert.equal(r.responses[0].code, 502);
   assert.match(r.responses[0].body.error, /Couldn't read the Google Sheet/);
+});
+
+test('audit workflow: pauses between Groq calls using LLM_PAUSE_SECONDS', async () => {
+  const wf = load('content-auditor-audit.json');
+  const r = makeRunner(wf, auditMocks());
+  await r.execute('Audit request', [{ json: { body: { heading: 'Composting at home', content: ARTICLE, keyword: 'composting at home' } } }]);
+  assert.deepEqual(r.pauses, [20, 20]);
+  const groqNodes = wf.nodes.filter((n) => n.name.startsWith('Groq:'));
+  assert.equal(groqNodes.length, 3);
+  for (const n of groqNodes) {
+    assert.equal(n.onError, 'continueRegularOutput');
+    assert.equal(n.maxTries, 5);
+    assert.deepEqual(n.credentials, { groqApi: { name: 'Groq account' } });
+    assert.equal(n.parameters.nodeCredentialType, 'groqApi');
+  }
+});
+
+test('audit workflow: Groq rate limit on the analysis still finishes with a clear error', async () => {
+  const wf = load('content-auditor-audit.json');
+  const mocks = auditMocks({
+    'Groq: analyse article': () => { throw new Error('Request failed with status code 429 - Too Many Requests'); },
+    'Groq: verify claims': () => { throw new Error('should not verify when analysis failed'); },
+  });
+  const r = makeRunner(wf, mocks);
+  await r.execute('Audit request', [{ json: { body: { heading: 'Composting at home', content: ARTICLE, keyword: 'composting at home' } } }]);
+  const row = r.calls.find((c) => c.node === 'Sheets: add to Results').body.values[0];
+  assert.equal(row[2], 'error');
+  const report = JSON.parse(row[14]);
+  assert.equal(report.status, 'error');
+  assert.match(report.review_reasons.join(' '), /Groq rate limit reached \(429\)/);
+  assert.equal(report.parameters.accuracy.points.relevancy, 0);
+  assert.ok(r.calls.find((c) => c.node === 'Sheets: add to Review'), 'failed audits go to review');
+  const mime = Buffer.from(r.calls.find((c) => c.node === 'Gmail: email reviewer').body.raw, 'base64url').toString('utf8');
+  assert.match(Buffer.from(mime.split('\r\n\r\n')[1], 'base64').toString('utf8'), /couldn't finish every check/);
+});
+
+test('audit workflow: a failed section-gap call gives no coverage points', async () => {
+  const wf = load('content-auditor-audit.json');
+  const r = makeRunner(wf, auditMocks({ 'Groq: section gaps': () => { throw new Error('Request failed with status code 401'); } }));
+  await r.execute('Audit request', [{ json: { body: { heading: 'Composting at home', content: ARTICLE, keyword: 'composting at home' } } }]);
+  const report = JSON.parse(r.calls.find((c) => c.node === 'Sheets: add to Results').body.values[0][14]);
+  assert.equal(report.parameters.sections.points.coverage, null);
+  assert.match(report.review_reasons.join(' '), /Groq rejected the API key/);
+  assert.equal(report.status, 'needs_review');
+});
+
+test('audit workflow: an unreadable URL writes a failed row instead of hanging', async () => {
+  const wf = load('content-auditor-audit.json');
+  const r = makeRunner(wf, auditMocks({ 'Fetch article': () => { throw new Error('403 Forbidden'); } }));
+  await r.execute('Audit request', [{ json: { body: { url: 'https://blocked.example/post', keyword: 'composting at home' } } }]);
+  assert.equal(r.responses[0].code, 202);
+  assert.ok(!r.calls.find((c) => c.node.startsWith('Groq:')), 'no Groq calls');
+  const row = r.calls.find((c) => c.node === 'Sheets: add failed audit').body.values[0];
+  assert.equal(row.length, 15);
+  assert.equal(row[2], 'error');
+  const report = JSON.parse(row[14]);
+  assert.equal(report.parameters, null);
+  assert.match(report.error, /Couldn't fetch https:\/\/blocked\.example\/post/);
+});
+
+test('audit workflow: a long article is trimmed to fit the prompt budget', async () => {
+  const wf = load('content-auditor-audit.json');
+  const long = ARTICLE + '\n' + Array.from({ length: 20 }, (_, i) => '## Extra section ' + i + '\n' + 'Long detailed text about compost. '.repeat(120)).join('\n');
+  let promptLen = 0;
+  const r = makeRunner(wf, auditMocks({
+    'Groq: analyse article': (req) => { promptLen = req.body.messages[1].content.length; return groqReply({ sections: [], claims: [] }); },
+  }));
+  await r.execute('Audit request', [{ json: { body: { heading: 'Composting at home', content: long, keyword: 'composting at home' } } }]);
+  assert.ok(long.length > 80000);
+  assert.ok(promptLen < 14000 + 4500, 'prompt was ' + promptLen + ' chars');
+  const report = JSON.parse(r.calls.find((c) => c.node === 'Sheets: add to Results').body.values[0][14]);
+  assert.ok(report.flags.some((f) => f.code === 'prompt_truncated'));
 });

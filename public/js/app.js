@@ -121,6 +121,7 @@ export function fmtDate(iso) {
 export function statusPill(status) {
   if (status === 'passed') return '<span class="pill ok">Passed</span>';
   if (status === 'needs_review') return '<span class="pill warn">Needs review</span>';
+  if (status === 'error') return '<span class="pill bad">Failed</span>';
   return '<span class="pill neutral">' + esc(status || 'Running') + '</span>';
 }
 

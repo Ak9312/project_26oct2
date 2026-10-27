@@ -16,7 +16,8 @@ function uuid(seed) {
 
 const CREDS = {
   webhook: { type: 'httpHeaderAuth', name: 'Content Auditor webhook secret' },
-  anthropic: { type: 'httpHeaderAuth', name: 'Anthropic API key' },
+  // n8n's built-in "Groq" credential: paste the API key, click Test.
+  groq: { type: 'groqApi', name: 'Groq account' },
   serpapi: { type: 'httpQueryAuth', name: 'SerpAPI key' },
   copyscape: { type: 'httpQueryAuth', name: 'Copyscape API key' },
   sheets: { type: 'googleSheetsOAuth2Api', name: 'Google Sheets account' },
@@ -165,21 +166,35 @@ function http(name, o) {
   const node = { name, type: 'n8n-nodes-base.httpRequest', typeVersion: 4.2, parameters: p };
   if (o.auth) node.credentials = cred(o.auth);
   if (o.continueOnError) node.onError = 'continueRegularOutput';
-  if (o.retry) Object.assign(node, { retryOnFail: true, maxTries: 3, waitBetweenTries: 5000 });
+  if (o.retry) Object.assign(node, { retryOnFail: true, maxTries: typeof o.retry === 'number' ? o.retry : 3, waitBetweenTries: 5000 });
   return node;
+}
+
+function pause(name, secondsExpr) {
+  return {
+    name,
+    type: 'n8n-nodes-base.wait',
+    typeVersion: 1.1,
+    webhookId: uuid('wait/' + name),
+    parameters: { resume: 'timeInterval', amount: '={{ ' + secondsExpr + ' }}', unit: 'seconds' },
+  };
 }
 
 const UA = 'Mozilla/5.0 (compatible; ContentQualityAuditor/1.0; +https://github.com/Ak9312/project_26oct2)';
 const V = "$('Validate input').first().json";
 const CFG = "$('Config').first().json.config";
-const anthropic = (name, bodyExpr) => http(name, {
+// Groq's free plan allows roughly 8,000 tokens per minute, so every Groq
+// call retries (5 tries, 5 s apart — n8n's maximum) and the workflow pauses
+// between calls. A call that still fails does not stop the audit: the
+// error is recorded and shown on the report.
+const groq = (name) => http(name, {
   method: 'POST',
-  url: 'https://api.anthropic.com/v1/messages',
-  auth: 'anthropic',
-  headers: { 'anthropic-version': '2023-06-01' },
-  jsonBody: bodyExpr,
-  timeout: 180000,
-  retry: true,
+  url: 'https://api.groq.com/openai/v1/chat/completions',
+  auth: 'groq',
+  jsonBody: 'JSON.stringify($json.request)',
+  timeout: 120000,
+  retry: 5,
+  continueOnError: true,
 });
 const serp = (name, qExpr, num) => http(name, {
   url: 'https://serpapi.com/search.json',
@@ -194,6 +209,26 @@ const serp = (name, qExpr, num) => http(name, {
   timeout: 60000,
   continueOnError: true,
 });
+const PAUSE = 'Math.max(1, Number(' + CFG + '.LLM_PAUSE_SECONDS) || 0)';
+const sheetsUrl = (tab) => '=https://sheets.googleapis.com/v4/spreadsheets/{{ ' + CFG + '.SPREADSHEET_ID }}/values/' + tab + '!A1:append';
+const appendTo = (name, tab, valuesExpr) => http(name, {
+  method: 'POST',
+  url: sheetsUrl(tab),
+  auth: 'sheets',
+  query: { valueInputOption: 'RAW', insertDataOption: 'INSERT_ROWS' },
+  jsonBody: 'JSON.stringify({ values: [' + valuesExpr + '] })',
+  retry: true,
+});
+
+// Reads one Groq reply into { error, data }. Shared by the three reader nodes.
+const READ_GROQ = `
+function readGroq(resp) {
+  const failure = llmFailure(resp);
+  if (failure) return { error: failure, data: {} };
+  try { return { error: '', data: extractJson(llmText(resp)) }; }
+  catch (e) { return { error: 'Groq answered, but not with valid JSON. Try again, or set REASONING_EFFORT to "medium".', data: {} }; }
+}
+`;
 
 // ------------------------------------------------------------------ audit
 function buildAudit() {
@@ -205,12 +240,17 @@ function buildAudit() {
   const cfg = f.add(configNode('Config', {
     SPREADSHEET_ID: 'PASTE_YOUR_GOOGLE_SHEET_ID',
     REVIEW_EMAIL: 'you@example.com',
-    APP_URL: 'https://your-app.vercel.app',
-    MODEL: 'claude-sonnet-5-5',
+    APP_URL: 'https://content-quality-auditor.vercel.app',
+    MODEL: 'openai/gpt-oss-120b',
+    REASONING_EFFORT: 'low',
+    MAX_PROMPT_CHARS: 14000,
+    LLM_PAUSE_SECONDS: 20,
     PASS_MARK: 70,
     COMPETITOR_PAGES: 8,
     COPYSCAPE_USERNAME: 'your-copyscape-username',
-  }, 'Settings for the audit pipeline. Keep PASS_MARK and SPREADSHEET_ID the same as in the API workflow.'), at());
+  }, 'Settings for the audit pipeline. Keep PASS_MARK and SPREADSHEET_ID the same as in the API workflow.\n' +
+     '// MODEL: any Groq chat model ID (console.groq.com/docs/models). MAX_PROMPT_CHARS and LLM_PAUSE_SECONDS keep each\n' +
+     '// audit inside Groq\'s free-plan tokens-per-minute limit; on a paid Groq plan you can raise the first and set the second to 1.'), at());
   const val = f.add(code('Validate input', ['text.js', 'input.js'], `
 const body = $input.first().json.body;
 const out = normalizeInput(body);
@@ -234,34 +274,50 @@ return [{ json: { ok: out.errors.length === 0, errors: out.errors, audit_id: mak
 const v = ${V};
 const inp = v.input;
 const cfg = ${CFG};
-let article;
+let article = null;
+let error = '';
 if (inp.url) {
   const got = $input.first().json;
   const html = got.data;
   if (typeof html !== 'string' || html.length < 200) {
     const why = got.error ? (got.error.message || 'request failed') : 'no HTML returned';
-    throw new Error('Could not fetch ' + inp.url + ' (' + why + '). The site may block bots; paste the content instead.');
+    error = "Couldn't fetch " + inp.url + ' (' + String(why).slice(0, 120) + '). The site may block automated requests; paste the content instead.';
+  } else {
+    article = parseHtml(html, inp.url);
+    if (inp.meta_description && !article.meta_description) article.meta_description = inp.meta_description;
   }
-  article = parseHtml(html, inp.url);
-  if (inp.meta_description && !article.meta_description) article.meta_description = inp.meta_description;
 } else {
   article = parsePasted(inp.heading, inp.content, inp.meta_description);
 }
-if (article.word_count < 50) throw new Error('Found only ' + article.word_count + ' words of article text.');
+if (!error && article.word_count < 50) {
+  error = 'Found only ' + article.word_count + ' words of article text. If this is a URL, the page may load its text with JavaScript; paste the content instead.';
+}
+if (error) return [{ json: { ok: false, error } }];
 const readability = analyzeReadability(article.body_text, inp.target_grade);
-const request = anthropicBody(cfg.MODEL, buildAnalysisPrompt(article, inp), 4000);
-return [{ json: { article, readability, request } }];
+const request = groqBody(cfg.MODEL, buildAnalysisPrompt(article, inp, cfg.MAX_PROMPT_CHARS), 2500, cfg.REASONING_EFFORT);
+const truncated = budgetArticle(article, cfg.MAX_PROMPT_CHARS).truncated;
+return [{ json: { ok: true, article, readability, request, truncated } }];
 `), at(200));
-  const claudeA = f.add(anthropic('Claude: analyse article', 'JSON.stringify($json.request)'), at(200));
-  const readA = f.add(code('Read analysis', ['text.js', 'llm.js', 'keywords.js'], `
+  const readable = f.add(ifNode('Article readable?', '$json.ok === true'), at(200));
+  const failReport = f.add(code('Build error report', ['text.js', 'scoring.js'], `
+const v = ${V};
+const cfg = ${CFG};
+const report = buildErrorReport({ audit_id: v.audit_id, created_at: v.created_at, input: v.input, error: $input.first().json.error, config: { pass_mark: cfg.PASS_MARK, model: cfg.MODEL } });
+return [{ json: { results_row: resultsRow(report) } }];
+`), [x + 240, 460]);
+  const appendFail = f.add(appendTo('Sheets: add failed audit', 'Results', '$json.results_row'), [x + 480, 460]);
+  const groqA = f.add(groq('Groq: analyse article'), at(200));
+  const readA = f.add(code('Read analysis', ['text.js', 'llm.js', 'keywords.js'], READ_GROQ + `
 const parsed = $('Parse article').first().json;
 const inp = ${V}.input;
-const analysis = normalizeAnalysis(extractJson(anthropicText($input.first().json)), parsed.article);
+const got = readGroq($input.first().json);
+const analysis = normalizeAnalysis(got.data, parsed.article);
 const keywords = analyzeKeywords(parsed.article, inp.keyword, inp.secondary, analysis.related_terms, analysis.intent);
-const out = analysis.claims.map((c, i) => ({ json: { i, claim: c.claim, q: c.search_query } }));
+const out = got.error ? [] : analysis.claims.map((c, i) => ({ json: { i, claim: c.claim, q: c.search_query } }));
 if (!out.length) out.push({ json: { i: -1, skip: true, q: inp.keyword } });
 out[0].json.analysis = analysis;
 out[0].json.keywords = keywords;
+out[0].json.analysis_error = got.error;
 return out;
 `), at(200));
   const anyClaims = f.add(ifNode('Any claims?', "$('Read analysis').first().json.i >= 0"), at(200));
@@ -270,19 +326,24 @@ return out;
 const cfg = ${CFG};
 const claims = $('Read analysis').all();
 const serps = $input.all();
-const items = claims.map((c, idx) => ({ claim: c.json.claim, results: serpOrganic(serps[idx] && serps[idx].json, 5) }));
-return [{ json: { items, request: anthropicBody(cfg.MODEL, buildVerifyPrompt(items), 3000) } }];
+const items = claims.map((c, idx) => ({ claim: c.json.claim, results: serpOrganic(serps[idx] && serps[idx].json, 3) }));
+return [{ json: { items, request: groqBody(cfg.MODEL, buildVerifyPrompt(items), 1500, cfg.REASONING_EFFORT) } }];
 `), [x + 480, 100]);
-  const claudeV = f.add(anthropic('Claude: verify claims', 'JSON.stringify($json.request)'), [x + 720, 100]);
-  x += 720;
-  const readV = f.add(code('Read verification', ['text.js', 'llm.js'], `
+  const pauseV = f.add(pause('Pause before claim check', PAUSE), [x + 720, 100]);
+  const groqV = f.add(groq('Groq: verify claims'), [x + 960, 100]);
+  x += 960;
+  const readV = f.add(code('Read verification', ['text.js', 'llm.js'], READ_GROQ + `
 const first = $input.first().json;
 let verification = [];
-if (Array.isArray(first.content)) {
+let error = '';
+if (!(first.skip === true && first.i === -1)) {
   const items = $('Verify prompt').first().json.items;
-  verification = normalizeVerification(extractJson(anthropicText(first)), items);
+  const got = readGroq(first);
+  error = got.error;
+  // On failure every claim stays "unverified" (half credit) and is flagged.
+  verification = normalizeVerification(got.data, items);
 }
-return [{ json: { verification } }];
+return [{ json: { verification, error } }];
 `), at(200));
   const serpKw = f.add(serp('SerpAPI: top results for keyword', V + '.input.keyword', 10), at(200));
   const pick = f.add(code('Pick competitors', ['text.js', 'parse.js', 'external.js'], `
@@ -312,22 +373,26 @@ const competitors = picks
 return [{ json: {
   usable: competitors.length > 0,
   competitors,
-  request: competitors.length ? anthropicBody(cfg.MODEL, buildGapPrompt(article, competitors, inp.keyword), 3000) : null,
+  request: competitors.length ? groqBody(cfg.MODEL, buildGapPrompt(article, competitors, inp.keyword), 1500, cfg.REASONING_EFFORT) : null,
 } }];
 `), [x + 480, 100]);
   const usable = f.add(ifNode('Usable competitors?', '$json.usable === true'), [x + 720, 100]);
-  const claudeG = f.add(anthropic('Claude: section gaps', 'JSON.stringify($json.request)'), [x + 960, 0]);
-  x += 960;
-  const readG = f.add(code('Read gaps', ['text.js', 'llm.js'], `
+  const pauseG = f.add(pause('Pause before section gaps', PAUSE), [x + 960, 0]);
+  const groqG = f.add(groq('Groq: section gaps'), [x + 1200, 0]);
+  x += 1200;
+  const readG = f.add(code('Read gaps', ['text.js', 'llm.js'], READ_GROQ + `
 const first = $input.first().json;
 let competitors = [];
 let gap = [];
-if (Array.isArray(first.content)) {
+let error = '';
+if (first.skip !== true && first.usable !== false) {
   competitors = $('Gap prompt').first().json.competitors;
-  gap = normalizeGap(extractJson(anthropicText(first)), competitors.length);
+  const got = readGroq(first);
+  error = got.error;
+  if (!error) gap = normalizeGap(got.data, competitors.length);
 }
 const article = $('Parse article').first().json.article;
-return [{ json: { competitors, gap, text: [article.h1, article.body_text].join('\\n') } }];
+return [{ json: { competitors, gap, error, text: [article.h1, article.body_text].join('\\n') } }];
 `), at(200));
   const copyscape = f.add(http('Copyscape: plagiarism', {
     method: 'POST',
@@ -344,13 +409,17 @@ const v = ${V};
 const cfg = ${CFG};
 const parsed = $('Parse article').first().json;
 const ra = $('Read analysis').first().json;
-const verification = $('Read verification').first().json.verification;
+const rv = $('Read verification').first().json;
 const g = $('Read gaps').first().json;
 let cs = $input.first().json;
 if (typeof cs.data === 'string') {
   try { cs = JSON.parse(cs.data); } catch (e) { cs = { error: 'Copyscape returned an unexpected reply' }; }
 }
 if (cs.error && typeof cs.error === 'object') cs = { error: cs.error.message || 'Copyscape request failed' };
+const errors = [];
+if (ra.analysis_error) errors.push('Article analysis: ' + ra.analysis_error);
+if (rv.error) errors.push('Claim check: ' + rv.error);
+if (g.error) errors.push('Section gaps: ' + g.error);
 const report = buildReport({
   audit_id: v.audit_id,
   created_at: v.created_at,
@@ -359,10 +428,14 @@ const report = buildReport({
   readability: parsed.readability,
   keywords: ra.keywords,
   analysis: ra.analysis,
-  verification,
+  verification: rv.verification,
   competitors: g.competitors,
   gap: g.gap,
   plagiarism: parseCopyscape(cs),
+  errors,
+  analysis_failed: Boolean(ra.analysis_error),
+  gap_failed: Boolean(g.error),
+  prompt_truncated: parsed.truncated === true,
   config: { pass_mark: cfg.PASS_MARK, model: cfg.MODEL },
 });
 const email = buildAlertEmail(report, cfg.REVIEW_EMAIL, cfg.APP_URL);
@@ -370,30 +443,15 @@ return [{ json: {
   audit_id: report.audit_id,
   status: report.status,
   total: report.total,
-  needs_review: report.status === 'needs_review',
+  needs_review: report.status !== 'passed',
   results_row: resultsRow(report),
   review_row: reviewRow(report),
   email_raw: email.raw,
 } }];
 `), at(200));
-  const sheetsUrl = (tab) => '=https://sheets.googleapis.com/v4/spreadsheets/{{ ' + CFG + '.SPREADSHEET_ID }}/values/' + tab + '!A1:append';
-  const appendR = f.add(http('Sheets: add to Results', {
-    method: 'POST',
-    url: sheetsUrl('Results'),
-    auth: 'sheets',
-    query: { valueInputOption: 'RAW', insertDataOption: 'INSERT_ROWS' },
-    jsonBody: "JSON.stringify({ values: [$('Build report').first().json.results_row] })",
-    retry: true,
-  }), at(200));
+  const appendR = f.add(appendTo('Sheets: add to Results', 'Results', "$('Build report').first().json.results_row"), at(200));
   const needs = f.add(ifNode('Needs review?', "$('Build report').first().json.needs_review === true"), at(200));
-  const appendRev = f.add(http('Sheets: add to Review', {
-    method: 'POST',
-    url: sheetsUrl('Review'),
-    auth: 'sheets',
-    query: { valueInputOption: 'RAW', insertDataOption: 'INSERT_ROWS' },
-    jsonBody: "JSON.stringify({ values: [$('Build report').first().json.review_row] })",
-    retry: true,
-  }), at(100));
+  const appendRev = f.add(appendTo('Sheets: add to Review', 'Review', "$('Build report').first().json.review_row"), at(100));
   const gmail = f.add(http('Gmail: email reviewer', {
     method: 'POST',
     url: 'https://gmail.googleapis.com/gmail/v1/users/me/messages/send',
@@ -411,14 +469,18 @@ return [{ json: {
   f.link(hasUrl, fetchA, 0);
   f.link(hasUrl, parse, 1);
   f.link(fetchA, parse);
-  f.link(parse, claudeA);
-  f.link(claudeA, readA);
+  f.link(parse, readable);
+  f.link(readable, groqA, 0);
+  f.link(readable, failReport, 1);
+  f.link(failReport, appendFail);
+  f.link(groqA, readA);
   f.link(readA, anyClaims);
   f.link(anyClaims, serpClaims, 0);
   f.link(anyClaims, readV, 1);
   f.link(serpClaims, verifyPrompt);
-  f.link(verifyPrompt, claudeV);
-  f.link(claudeV, readV);
+  f.link(verifyPrompt, pauseV);
+  f.link(pauseV, groqV);
+  f.link(groqV, readV);
   f.link(readV, serpKw);
   f.link(serpKw, pick);
   f.link(pick, haveComp);
@@ -426,9 +488,10 @@ return [{ json: {
   f.link(haveComp, readG, 1);
   f.link(fetchC, gapPrompt);
   f.link(gapPrompt, usable);
-  f.link(usable, claudeG, 0);
+  f.link(usable, pauseG, 0);
   f.link(usable, readG, 1);
-  f.link(claudeG, readG);
+  f.link(pauseG, groqG);
+  f.link(groqG, readG);
   f.link(readG, copyscape);
   f.link(copyscape, build);
   f.link(build, appendR);

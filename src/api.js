@@ -126,7 +126,9 @@ export function handleApi(body, sheets, config) {
   if (action === 'validation') {
     const byId = new Map(results.map((r) => [r.audit_id, summary(r)]));
     const pairs = validation.map((v) => {
-      const ai = byId.get(v.audit_id) || null;
+      const found = byId.get(v.audit_id) || null;
+      // Audits that errored have incomplete scores, so they don't count.
+      const ai = found && found.status !== 'error' ? found : null;
       return {
         audit_id: v.audit_id,
         title: v.title || (ai && ai.title) || '',
