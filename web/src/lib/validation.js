@@ -6,7 +6,7 @@ export const PARAMS = [
   { key: 'readability', label: 'Readability', max: 20 },
   { key: 'keywords', label: 'Keywords', max: 20 },
   { key: 'sections', label: 'Missing sections', max: 20 },
-  { key: 'plagiarism', label: 'Plagiarism', max: 10 },
+  { key: 'plagiarism', label: 'Originality (plagiarism)', max: 10 },
 ];
 
 function num(v) {

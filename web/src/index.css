@@ -1,0 +1,125 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import '@fontsource-variable/inter';
+@import '@fontsource-variable/jetbrains-mono';
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* shadcn/ui-style design tokens: indigo brand, cool neutrals. */
+:root {
+  --radius: 0.7rem;
+  --background: oklch(0.985 0.003 264);
+  --foreground: oklch(0.21 0.03 265);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.21 0.03 265);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.21 0.03 265);
+  --primary: oklch(0.511 0.262 276.966);
+  --primary-foreground: oklch(0.985 0.01 277);
+  --secondary: oklch(0.962 0.008 264);
+  --secondary-foreground: oklch(0.28 0.04 265);
+  --muted: oklch(0.962 0.008 264);
+  --muted-foreground: oklch(0.5 0.03 264);
+  --accent: oklch(0.955 0.03 277);
+  --accent-foreground: oklch(0.36 0.17 277);
+  --destructive: oklch(0.577 0.215 27);
+  --border: oklch(0.915 0.01 264);
+  --input: oklch(0.89 0.012 264);
+  --ring: oklch(0.585 0.233 277);
+  --good: oklch(0.6 0.15 160);
+  --good-soft: oklch(0.955 0.04 160);
+  --good-ink: oklch(0.42 0.11 160);
+  --warn: oklch(0.72 0.16 70);
+  --warn-soft: oklch(0.965 0.045 85);
+  --warn-ink: oklch(0.47 0.12 60);
+  --bad: oklch(0.6 0.2 18);
+  --bad-soft: oklch(0.96 0.025 18);
+  --bad-ink: oklch(0.47 0.17 20);
+  --chart-grid: oklch(0.915 0.01 264);
+}
+
+.dark {
+  --background: oklch(0.155 0.014 268);
+  --foreground: oklch(0.95 0.008 264);
+  --card: oklch(0.2 0.018 268);
+  --card-foreground: oklch(0.95 0.008 264);
+  --popover: oklch(0.21 0.018 268);
+  --popover-foreground: oklch(0.95 0.008 264);
+  --primary: oklch(0.673 0.182 276.935);
+  --primary-foreground: oklch(0.18 0.05 277);
+  --secondary: oklch(0.255 0.02 268);
+  --secondary-foreground: oklch(0.92 0.01 264);
+  --muted: oklch(0.255 0.02 268);
+  --muted-foreground: oklch(0.7 0.02 264);
+  --accent: oklch(0.29 0.06 277);
+  --accent-foreground: oklch(0.86 0.08 277);
+  --destructive: oklch(0.65 0.2 22);
+  --border: oklch(0.29 0.02 268);
+  --input: oklch(0.33 0.022 268);
+  --ring: oklch(0.673 0.182 277);
+  --good: oklch(0.72 0.15 162);
+  --good-soft: oklch(0.29 0.05 162);
+  --good-ink: oklch(0.83 0.12 162);
+  --warn: oklch(0.8 0.15 80);
+  --warn-soft: oklch(0.3 0.05 75);
+  --warn-ink: oklch(0.86 0.12 82);
+  --bad: oklch(0.7 0.18 20);
+  --bad-soft: oklch(0.29 0.06 20);
+  --bad-ink: oklch(0.84 0.1 20);
+  --chart-grid: oklch(0.3 0.02 268);
+}
+
+@theme inline {
+  --font-sans: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono Variable', ui-monospace, monospace;
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-good: var(--good);
+  --color-good-soft: var(--good-soft);
+  --color-good-ink: var(--good-ink);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-warn-ink: var(--warn-ink);
+  --color-bad: var(--bad);
+  --color-bad-soft: var(--bad-soft);
+  --color-bad-ink: var(--bad-ink);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+@layer base {
+  * { @apply border-border outline-ring/50; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: 'cv11', 'ss01';
+  }
+  [hidden] { display: none !important; }
+}
+
+.tabular { font-variant-numeric: tabular-nums; }
+.recharts-text { fill: var(--muted-foreground); font-size: 12px; }
+.recharts-polar-grid-angle line, .recharts-polar-grid-concentric polygon { stroke: var(--chart-grid); }
+
+@media print {
+  header, .no-print { display: none !important; }
+  body { background: white; }
+}

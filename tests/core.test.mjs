@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { loadSources } from '../scripts/inline.mjs';
-import { computeValidation, pearson } from '../public/js/validation.js';
+import { computeValidation, pearson } from '../web/src/lib/validation.js';
 
 const lib = loadSources(
   ['text.js', 'parse.js', 'readability.js', 'keywords.js', 'llm.js', 'scoring.js', 'input.js', 'external.js'],

@@ -1,6 +1,6 @@
 # AI Content Quality Auditor
 
-A web app on Vercel that scores articles out of 100 for accuracy, readability, keywords, missing sections and plagiarism. Every audit is saved, low scores go to a human review queue, and a validation page compares the auditor with your own scores on 30 test articles. The AI checks run on [Groq](https://groq.com).
+A web app on Vercel (React, Tailwind CSS, shadcn/ui) that scores articles out of 100 for accuracy, readability, keywords, missing sections and plagiarism. Every audit is saved, low scores go to a human review queue, and a validation page compares the auditor with your own scores on 30 test articles. The AI checks run on [Groq](https://groq.com).
 
 Everything runs inside the Vercel project: there is no n8n or other server to set up.
 
@@ -100,7 +100,9 @@ Targets shown in the app: an average total gap within 5 points, and pass/fail ag
 ## What's in the repo
 
 ```
-public/                 Web app (plain HTML/CSS/JS)
+web/                    Front end: React + Tailwind CSS + shadcn/ui-style components (Radix), Recharts
+  src/pages/              Audits, New audit, Report, Review queue, Validation
+  src/components/         UI primitives, charts, layout
 api/                    Vercel functions
   audit.js                starts an audit, runs it in the background (up to 5 min)
   data.js                 list, report, review queue, validation
@@ -114,14 +116,19 @@ scripts/                engine and sample-data generators, local server
 tests/                  unit tests + full simulated audits (rate limits, missing keys, blocked sites, time limit)
 ```
 
+Vercel runs `npm run build` (Vite) and serves `dist/`; every page path falls back to the app, and `/api/*` goes to the functions.
+
 ## Local development
 
 ```bash
 npm install
-MOCK_MODE=1 npm run dev     # http://localhost:3000 with sample data
-npm test                    # 46 tests
-npm run generate            # rebuild api/_engine.js and sample data after editing src/
-npm run check               # tests + confirm generated files match src/
+npm run build && MOCK_MODE=1 npm run preview   # http://localhost:3000 with sample data
+# or, for live editing:
+MOCK_MODE=1 npm run dev:api                    # API on :3000
+npm run dev                                    # Vite on :5173, proxies /api
+npm test                                       # tests
+npm run generate                               # rebuild api/_engine.js and sample data after editing src/
+npm run check                                  # tests + generated files match src/ + production build
 ```
 
 ## Troubleshooting
