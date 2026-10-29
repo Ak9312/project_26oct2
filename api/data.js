@@ -20,7 +20,7 @@ export default async function handler(req, res) {
   try {
     switch (body.action) {
       case 'list':
-        return send(res, 200, listResponse(await store.getIndex(), passMark));
+        return send(res, 200, listResponse(await store.getIndexSynced(), passMark));
       case 'get': {
         // While an audit runs there is no report yet: one cheap read per poll.
         const record = await store.getRecord(body.audit_id);

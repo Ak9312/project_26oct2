@@ -10,7 +10,7 @@ export default async function handler(req, res) {
   const store = getStore();
   if (!store) return send(res, 500, { error: NO_STORAGE });
   try {
-    const csv = toCsv(await store.getIndex());
+    const csv = toCsv(await store.getIndexSynced());
     const day = new Date().toISOString().slice(0, 10);
     res.status(200);
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');

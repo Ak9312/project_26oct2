@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Cell, Tooltip as RTooltip, CartesianGrid } from 'recharts';
-import { Plus, Download, Search, FileText, Gauge, Flag, CheckCircle2, ArrowUpRight } from 'lucide-react';
+import { Plus, Download, Search, FileText, Gauge, Flag, CheckCircle2, ArrowUpRight, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button, Card, CardHeader, CardTitle, CardDescription, CardContent, Input, Table, THead, TBody, TR, TH, TD, Skeleton, Badge } from '@/components/ui';
 import { PageHeader, ErrorNote } from '@/components/layout';
@@ -77,7 +77,18 @@ export default function AuditsPage() {
   const [filter, setFilter] = useState('all');
   const navigate = useNavigate();
 
-  useEffect(() => { data('list').then(setRes).catch(setError); }, []);
+  const [loading, setLoading] = useState(false);
+  const load = useCallback(() => {
+    setLoading(true);
+    return data('list').then((r) => { setRes(r); setError(null); }).catch(setError).finally(() => setLoading(false));
+  }, []);
+  // Load on open, and again whenever you come back to this tab.
+  useEffect(() => {
+    load();
+    const onVisible = () => { if (document.visibilityState === 'visible') load(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [load]);
   const audits = res ? res.audits : [];
   const passMark = res ? res.pass_mark : 70;
 
@@ -101,6 +112,7 @@ export default function AuditsPage() {
         title="Audits"
         description="Every article you've scored, with the score breakdown, review status and history."
         actions={<>
+          <Button variant="outline" onClick={load} disabled={loading} aria-label="Refresh the list"><RefreshCw className={loading ? 'animate-spin' : ''} />Refresh</Button>
           <Button variant="outline" onClick={exportCsv}><Download />Download CSV</Button>
         </>}
       />

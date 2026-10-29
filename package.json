@@ -12,7 +12,7 @@
     "dev:api": "node scripts/dev-server.mjs --api-only",
     "build": "vite build",
     "preview": "node scripts/dev-server.mjs",
-    "test": "node --test tests/*.test.mjs",
+    "test": "node --experimental-test-module-mocks --test tests/*.test.mjs",
     "generate": "node scripts/build-engine.mjs && node scripts/build-mock.mjs",
     "check": "npm test && npm run generate && git diff --exit-code -- api/_engine.js api/_mock-data.js && vite build"
   },
