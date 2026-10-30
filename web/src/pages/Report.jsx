@@ -148,10 +148,14 @@ function ReadabilityTab({ R }) {
     <div className="space-y-6">
       <SubScores items={[['Grade level', R.points.grade, 8], ['Hard sentences', R.points.hard_sentences, 6], ['Passive voice', R.points.passive, 3], ['Adverbs', R.points.adverbs, 3]]} />
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        {[['Reading grade', fmtNum(R.grade, 1), 'target ' + R.target_grade], ['Hard sentences', (R.hard_sentences + R.very_hard_sentences) + ' / ' + R.sentences, R.very_hard_sentences + ' very hard'], ['Passive voice', R.passive, 'uses'], ['Adverbs', R.adverbs, fmtNum(R.adverbs_per_100_words, 1) + ' per 100 words']].map(([k, v, s]) => (
+        {[['Reading grade', fmtNum(R.grade, 1), 'target ' + R.target_grade + (R.target_source === 'competitors' ? ' (top pages)' : R.target_source === 'chosen' ? ' (yours)' : '')], ['Hard sentences', (R.hard_sentences + R.very_hard_sentences) + ' / ' + R.sentences, R.very_hard_sentences + ' very hard'], ['Passive voice', R.passive, 'uses'], ['Adverbs', R.adverbs, fmtNum(R.adverbs_per_100_words, 1) + ' per 100 words']].map(([k, v, s]) => (
           <div key={k} className="rounded-lg border p-3"><div className="text-xs text-muted-foreground">{k}</div><div className="mt-1 font-mono text-xl font-semibold tabular">{v}</div><div className="text-xs text-muted-foreground">{s}</div></div>
         ))}
       </div>
+      <p className="text-xs text-muted-foreground">{R.target_source === 'competitors'
+        ? `Target set from the top-ranking pages: their median grade is ${fmtNum(R.competitor_median_grade, 1)} across ${R.competitor_pages} pages (kept between 6 and 12).`
+        : R.target_source === 'chosen' ? 'Target grade chosen when the audit was started.'
+        : R.target_source === 'default' ? 'Fewer than 3 top-ranking pages could be read, so the Hemingway default (grade 9) was used.' : null}</p>
       {R.hardest_sentence ? (
         <div>
           <h3 className="mb-2 text-sm font-semibold">Hardest sentence <span className="font-normal text-muted-foreground">(grade {fmtNum(R.hardest_sentence.grade, 1)})</span></h3>
@@ -172,7 +176,7 @@ function ReadabilityTab({ R }) {
 function KeywordsTab({ K }) {
   return (
     <div className="space-y-6">
-      <SubScores items={[['Placement', K.points.placement, 6], ['Density', K.points.density, 4], ['Related terms', K.points.related, 6], ['Intent', K.points.intent, 4]]} />
+      <SubScores items={[['Placement', K.points.placement, (K.max_points || {}).placement || 6], ['Density', K.points.density, (K.max_points || {}).density || 4], ['Related terms', K.points.related, (K.max_points || {}).related || 6], ['Intent', K.points.intent, (K.max_points || {}).intent || 4]]} />
       <div className="grid gap-6 lg:grid-cols-2">
         <div>
           <h3 className="mb-3 text-sm font-semibold">“{K.keyword}” placement</h3>
@@ -184,7 +188,7 @@ function KeywordsTab({ K }) {
               </li>
             ))}
           </ul>
-          <p className="mt-3 text-sm">Appears <b>{K.occurrences}</b> time{K.occurrences === 1 ? '' : 's'} · density <b className="font-mono">{fmtNum(K.density, 1)}%</b> <span className="text-muted-foreground">(target 0.5–2.5%)</span></p>
+          <p className="mt-3 text-sm">Appears <b>{K.occurrences}</b> time{K.occurrences === 1 ? '' : 's'} · density <b className="font-mono">{fmtNum(K.density, 1)}%</b> <span className="text-muted-foreground">(target 0.5–2.5%; over 3.5% reads as stuffing)</span></p>
         </div>
         <div>
           <h3 className="mb-3 text-sm font-semibold">Related terms</h3>
@@ -201,7 +205,7 @@ function SectionsTab({ S }) {
   const tone = { covered: 'good', thin: 'warn', missing: 'bad' };
   return (
     <div className="space-y-6">
-      <SubScores items={[['Topic coverage', S.points.coverage, 12], ['Structure', S.points.structure, 4], ['Depth', S.points.depth, 4]]} />
+      <SubScores items={[['Topic coverage', S.points.coverage, (S.max_points || {}).coverage || 12], ['Structure', S.points.structure, (S.max_points || {}).structure || 4], [S.max_points ? 'Not thin' : 'Depth', S.points.depth, (S.max_points || {}).depth || 4]]} />
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_280px]">
         <div>
           <h3 className="mb-3 text-sm font-semibold">Subtopics on the top-ranking pages</h3>
@@ -229,6 +233,7 @@ function SectionsTab({ S }) {
             <div className="text-xs text-muted-foreground">Length</div>
             <div className="mt-1 font-mono text-xl font-semibold tabular">{S.word_count.toLocaleString()} <span className="text-sm font-normal text-muted-foreground">words</span></div>
             {S.competitor_median_words ? <div className="text-xs text-muted-foreground">Top pages median: {S.competitor_median_words.toLocaleString()}</div> : null}
+            {S.max_points ? <div className="mt-2 text-xs text-muted-foreground">Google has no preferred word count, so length only loses points when it's under half the top pages' median.</div> : null}
           </div>
         </div>
       </div>
@@ -361,7 +366,7 @@ export default function ReportPage() {
           <div className="mt-3 flex flex-wrap gap-2">
             <Badge variant="outline">Keyword: {rep.input.keyword}</Badge>
             <Badge variant="outline">{rep.input.market_label}</Badge>
-            <Badge variant="outline">Target grade {rep.input.target_grade}</Badge>
+            <Badge variant="outline">Target grade {R.target_grade}{R.target_source === 'competitors' ? ' · from top pages' : ''}</Badge>
           </div>
         </div>
         <div className="no-print flex shrink-0 gap-2">

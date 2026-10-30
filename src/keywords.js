@@ -12,9 +12,11 @@ export function keywordDensity(text, keyword) {
   return { occurrences, density: round1(density) };
 }
 
+// Density is worth only 2 points: like Ahrefs, the score rewards covering
+// related terms more than repeating the exact phrase. Over 3.5% is stuffing.
 export function densityPoints(density) {
-  if (density >= 0.5 && density <= 2.5) return 4;
-  if ((density >= 0.3 && density < 0.5) || (density > 2.5 && density <= 3.5)) return 2;
+  if (density >= 0.5 && density <= 2.5) return 2;
+  if ((density >= 0.2 && density < 0.5) || (density > 2.5 && density <= 3.5)) return 1;
   return 0;
 }
 
@@ -49,7 +51,7 @@ export function analyzeKeywords(article, keyword, secondary, relatedTerms, inten
   (secondary || []).forEach((t) => addTerm(t, 'you'));
   (relatedTerms || []).slice(0, 12).forEach((t) => addTerm(t, 'suggested'));
   const covered = terms.filter((t) => t.covered).length;
-  const relatedPts = terms.length ? Math.round((6 * covered) / terms.length) : 6;
+  const relatedPts = terms.length ? Math.round((8 * covered) / terms.length) : 8;
 
   const intentPts = Math.round(clamp(intent && intent.score, 0, 4));
 
@@ -64,6 +66,7 @@ export function analyzeKeywords(article, keyword, secondary, relatedTerms, inten
       note: (intent && intent.note) || '',
     },
     points: { placement: placementPts, density: densPts, related: relatedPts, intent: intentPts },
+    max_points: { placement: 6, density: 2, related: 8, intent: 4 },
     score: placementPts + densPts + relatedPts + intentPts,
     max: 20,
   };

@@ -138,3 +138,14 @@ export function analyzeReadability(text, targetGrade) {
     max: 20,
   };
 }
+
+// Target grade: the median grade of the top-ranking pages (Semrush sets its
+// readability target from the top 10 results the same way), kept within
+// grades 6-12. Needs at least 3 readable pages; otherwise grade 9, the
+// Hemingway default. A grade the user picked always wins.
+export function readabilityTarget(competitorGrades, input) {
+  if (input && input.target_auto === false) return { target: input.target_grade, source: 'chosen' };
+  const g = (competitorGrades || []).filter((x) => Number.isFinite(x) && x > 0);
+  if (g.length < 3) return { target: 9, source: 'default' };
+  return { target: clamp(Math.round(median(g)), 6, 12), source: 'competitors', competitor_median: round1(median(g)), pages: g.length };
+}

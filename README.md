@@ -23,12 +23,19 @@ flowchart LR
 | Parameter | Points | How it is checked |
 |---|---|---|
 | **Accuracy and relevancy** | 30 | Heading ↔ content match, 0–10 per H2/H3, averaged (10). Factual claims pulled out by the AI, each searched on Google via SerpAPI, then judged **only from those search results** (12). Time-sensitive statements (5). Does the article deliver what the title promises (3). |
-| **Readability** | 20 | Hemingway-style, computed in code: ARI grade vs your target (8), share of hard/very hard sentences (6), passive voice (3), adverbs per 100 words (3). |
-| **Keywords** | 20 | Primary keyword in title, H1, first 100 words and meta description (6). Density 0.5–2.5% (4). Your secondary keywords plus up to 10 related terms, each checked in the text by code (6). Search intent match (4). |
-| **Missing sections** | 20 | Headings of the top-ranking pages are compared with yours; subtopics that appear on at least 3 of them must be covered (12). Intro, conclusion, FAQ, 3+ H2s (4). Length vs the median of the top pages (4). |
+| **Readability** | 20 | Hemingway-style, computed in code: ARI grade vs the target (8), share of hard/very hard sentences (6), passive voice (3), adverbs per 100 words (3). The target grade is the median grade of the top-ranking pages (kept between 6 and 12), the way Semrush sets its readability target from the top 10; grade 9 if fewer than 3 pages can be read. A grade picked on the New audit form overrides it. |
+| **Keywords** | 20 | Primary keyword in title, H1, first 100 words and meta description (6). Density 0.5–2.5% (2; over 3.5% counts as stuffing). Your secondary keywords plus up to 10 related terms, each checked in the text by code (8). Search intent match (4). Related terms outweigh exact repeats, as in Ahrefs' topic-based scoring. |
+| **Missing sections** | 20 | Headings of the top-ranking pages are compared with yours; subtopics that appear on at least 3 of them must be covered (14). Intro, conclusion, FAQ, 3+ H2s (4). Not thin (2): Google says it has no preferred word count, so length only loses points below half the top pages' median. |
 | **Plagiarism** | 10 | **Free Google phrase check** (uses your SerpAPI key): 3 distinctive sentences from the article are searched on Google in quotes. None found on other sites = 10, one = 5, two or more = 0 and sent to review. It catches copied passages, not reworded ones. Optional upgrade: if Copyscape keys are added, a full Copyscape comparison is used instead (0–5% match = 10, 5–10% = 6, 10–15% = 2, over 15% = 0). |
 
 **An article goes to the review queue** when the total is below the pass mark (70 by default), a claim is contradicted by a search result, plagiarism is over 15%, or a check couldn't run (a missing key, a rate limit, a blocked site). A check that didn't run never counts as a pass. If the main AI step fails, the audit is marked **Failed**: it still shows what was checked, but it doesn't count in validation.
+
+### How this compares with Google, Semrush and Ahrefs
+
+- **Google** publishes no score. Its people-first content guidance asks about sourcing, expertise and easily verified factual errors (the fact check here), says it has no preferred word count (so length only penalises thin pages), and treats content made mainly for search traffic as a warning sign.
+- **Semrush SEO Writing Assistant** sets its readability target from the top 10 Google results (done here too) and recommends related keywords that are common in top-ranking pages.
+- **Ahrefs AI Content Helper** scores how well the topics shared by top-ranking pages are covered, and says keyword stuffing doesn't help (hence topic coverage at 14 points and density at 2).
+- None of them fact-checks claims; Ahrefs' own study found only weak correlation between content scores and rankings, so treat the total as a quality checklist, not a ranking prediction.
 
 ### How hallucination is kept out
 

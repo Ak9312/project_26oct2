@@ -13,10 +13,11 @@ export function plagiarismPoints(percent) {
   return 0;
 }
 
+// Google says it has no preferred word count, so length only loses points
+// when the article is clearly thinner than the top pages (under half their
+// median length). Being longer never earns more.
 export function depthPoints(ratio) {
   if (!Number.isFinite(ratio)) return null;
-  if (ratio >= 0.9) return 4;
-  if (ratio >= 0.7) return 3;
   if (ratio >= 0.5) return 2;
   if (ratio >= 0.3) return 1;
   return 0;
@@ -58,11 +59,11 @@ function sectionsBlock(article, competitors, topics, gapFailed) {
   let coverage = null;
   // If the AI step failed, coverage is unknown: no points, never full marks.
   if (competitors.length && !gapFailed) {
-    if (!topics.length) coverage = 12;
+    if (!topics.length) coverage = 14;
     else {
       const covered = topics.filter((t) => t.coverage === 'covered').length;
       const thin = topics.filter((t) => t.coverage === 'thin').length;
-      coverage = Math.round((12 * (covered + 0.5 * thin)) / topics.length);
+      coverage = Math.round((14 * (covered + 0.5 * thin)) / topics.length);
     }
   }
 
@@ -79,6 +80,7 @@ function sectionsBlock(article, competitors, topics, gapFailed) {
   const points = { coverage, structure: structurePts, depth };
   return {
     points,
+    max_points: { coverage: 14, structure: 4, depth: 2 },
     score: (coverage || 0) + structurePts + (depth || 0),
     max: 20,
     topics,

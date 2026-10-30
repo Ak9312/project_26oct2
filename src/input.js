@@ -38,6 +38,9 @@ export function normalizeInput(body) {
     .filter(Boolean)
     .slice(0, 15);
 
+  // 'auto' (the default) sets the target from the top-ranking pages, as
+  // Semrush does; a number fixes it.
+  const autoGrade = b.target_grade === undefined || b.target_grade === null || b.target_grade === '' || String(b.target_grade).toLowerCase() === 'auto';
   const grade = Number(b.target_grade);
   const market = MARKETS[b.market] || MARKETS['in-en'];
 
@@ -50,7 +53,8 @@ export function normalizeInput(body) {
       meta_description: collapseWhitespace(b.meta_description),
       keyword,
       secondary,
-      target_grade: Number.isFinite(grade) && grade >= 4 && grade <= 16 ? grade : 9,
+      target_grade: !autoGrade && Number.isFinite(grade) && grade >= 4 && grade <= 16 ? grade : 9,
+      target_auto: autoGrade,
       market: b.market && MARKETS[b.market] ? b.market : 'in-en',
       gl: market.gl,
       hl: market.hl,

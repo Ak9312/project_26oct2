@@ -350,6 +350,17 @@ function analyzeReadability(text, targetGrade) {
   };
 }
 
+// Target grade: the median grade of the top-ranking pages (Semrush sets its
+// readability target from the top 10 results the same way), kept within
+// grades 6-12. Needs at least 3 readable pages; otherwise grade 9, the
+// Hemingway default. A grade the user picked always wins.
+function readabilityTarget(competitorGrades, input) {
+  if (input && input.target_auto === false) return { target: input.target_grade, source: 'chosen' };
+  const g = (competitorGrades || []).filter((x) => Number.isFinite(x) && x > 0);
+  if (g.length < 3) return { target: 9, source: 'default' };
+  return { target: clamp(Math.round(median(g)), 6, 12), source: 'competitors', competitor_median: round1(median(g)), pages: g.length };
+}
+
 // ---- keywords.js
 // Keyword checks. Placement and density are computed here; the LLM only
 // proposes related terms and judges search intent, and coverage of every
@@ -365,9 +376,11 @@ function keywordDensity(text, keyword) {
   return { occurrences, density: round1(density) };
 }
 
+// Density is worth only 2 points: like Ahrefs, the score rewards covering
+// related terms more than repeating the exact phrase. Over 3.5% is stuffing.
 function densityPoints(density) {
-  if (density >= 0.5 && density <= 2.5) return 4;
-  if ((density >= 0.3 && density < 0.5) || (density > 2.5 && density <= 3.5)) return 2;
+  if (density >= 0.5 && density <= 2.5) return 2;
+  if ((density >= 0.2 && density < 0.5) || (density > 2.5 && density <= 3.5)) return 1;
   return 0;
 }
 
@@ -402,7 +415,7 @@ function analyzeKeywords(article, keyword, secondary, relatedTerms, intent) {
   (secondary || []).forEach((t) => addTerm(t, 'you'));
   (relatedTerms || []).slice(0, 12).forEach((t) => addTerm(t, 'suggested'));
   const covered = terms.filter((t) => t.covered).length;
-  const relatedPts = terms.length ? Math.round((6 * covered) / terms.length) : 6;
+  const relatedPts = terms.length ? Math.round((8 * covered) / terms.length) : 8;
 
   const intentPts = Math.round(clamp(intent && intent.score, 0, 4));
 
@@ -417,6 +430,7 @@ function analyzeKeywords(article, keyword, secondary, relatedTerms, intent) {
       note: (intent && intent.note) || '',
     },
     points: { placement: placementPts, density: densPts, related: relatedPts, intent: intentPts },
+    max_points: { placement: 6, density: 2, related: 8, intent: 4 },
     score: placementPts + densPts + relatedPts + intentPts,
     max: 20,
   };
@@ -705,10 +719,11 @@ function plagiarismPoints(percent) {
   return 0;
 }
 
+// Google says it has no preferred word count, so length only loses points
+// when the article is clearly thinner than the top pages (under half their
+// median length). Being longer never earns more.
 function depthPoints(ratio) {
   if (!Number.isFinite(ratio)) return null;
-  if (ratio >= 0.9) return 4;
-  if (ratio >= 0.7) return 3;
   if (ratio >= 0.5) return 2;
   if (ratio >= 0.3) return 1;
   return 0;
@@ -750,11 +765,11 @@ function sectionsBlock(article, competitors, topics, gapFailed) {
   let coverage = null;
   // If the AI step failed, coverage is unknown: no points, never full marks.
   if (competitors.length && !gapFailed) {
-    if (!topics.length) coverage = 12;
+    if (!topics.length) coverage = 14;
     else {
       const covered = topics.filter((t) => t.coverage === 'covered').length;
       const thin = topics.filter((t) => t.coverage === 'thin').length;
-      coverage = Math.round((12 * (covered + 0.5 * thin)) / topics.length);
+      coverage = Math.round((14 * (covered + 0.5 * thin)) / topics.length);
     }
   }
 
@@ -771,6 +786,7 @@ function sectionsBlock(article, competitors, topics, gapFailed) {
   const points = { coverage, structure: structurePts, depth };
   return {
     points,
+    max_points: { coverage: 14, structure: 4, depth: 2 },
     score: (coverage || 0) + structurePts + (depth || 0),
     max: 20,
     topics,
@@ -943,6 +959,9 @@ function normalizeInput(body) {
     .filter(Boolean)
     .slice(0, 15);
 
+  // 'auto' (the default) sets the target from the top-ranking pages, as
+  // Semrush does; a number fixes it.
+  const autoGrade = b.target_grade === undefined || b.target_grade === null || b.target_grade === '' || String(b.target_grade).toLowerCase() === 'auto';
   const grade = Number(b.target_grade);
   const market = MARKETS[b.market] || MARKETS['in-en'];
 
@@ -955,7 +974,8 @@ function normalizeInput(body) {
       meta_description: collapseWhitespace(b.meta_description),
       keyword,
       secondary,
-      target_grade: Number.isFinite(grade) && grade >= 4 && grade <= 16 ? grade : 9,
+      target_grade: !autoGrade && Number.isFinite(grade) && grade >= 4 && grade <= 16 ? grade : 9,
+      target_auto: autoGrade,
       market: b.market && MARKETS[b.market] ? b.market : 'in-en',
       gl: market.gl,
       hl: market.hl,
@@ -1005,6 +1025,7 @@ function competitorOutline(html, url, fallbackTitle) {
     url,
     title: a.title || fallbackTitle || '',
     word_count: a.word_count,
+    grade: a.word_count >= 200 ? analyzeReadability(a.body_text).grade : null,
     headings: a.sections.map((s) => s.heading).filter((h) => h && h.length <= 120).slice(0, 40),
   };
 }
@@ -1492,7 +1513,6 @@ async function runAudit(job, cfg, deps) {
   if (article.word_count < 50) {
     return fail('Found only ' + article.word_count + ' words of article text. If this is a URL, the page may load its text with JavaScript; paste the content instead.');
   }
-  const readability = analyzeReadability(article.body_text, inp.target_grade);
   const truncated = budgetArticle(article, cfg.maxPromptChars).truncated;
 
   // 2. Groq: relevancy, claims, related terms, intent
@@ -1544,6 +1564,15 @@ async function runAudit(job, cfg, deps) {
     }
   }
 
+  // Readability, with the target grade taken from the top-ranking pages
+  const target = readabilityTarget(competitors.map((c) => c.grade), inp);
+  const readability = analyzeReadability(article.body_text, target.target);
+  readability.target_source = target.source;
+  if (target.source === 'competitors') {
+    readability.competitor_median_grade = target.competitor_median;
+    readability.competitor_pages = target.pages;
+  }
+
   // 5. Plagiarism
   const plagiarism = timeLeft() > 30000
     ? await plagiarismCheck(deps, cfg, article, inp)
@@ -1569,4 +1598,4 @@ async function runAudit(job, cfg, deps) {
   });
 }
 
-export { normalizeInput, makeAuditId, runAudit, auditConfig, groqKeyProblem, buildReport, buildErrorReport, summarize, upsertEntry, replaceEntry, listResponse, getResponse, reviewListResponse, applyReview, applyValidation, validationResponse, toCsv };
+export { normalizeInput, makeAuditId, runAudit, auditConfig, groqKeyProblem, buildReport, buildErrorReport, readabilityTarget, summarize, upsertEntry, replaceEntry, listResponse, getResponse, reviewListResponse, applyReview, applyValidation, validationResponse, toCsv };

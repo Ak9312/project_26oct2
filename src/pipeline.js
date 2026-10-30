@@ -172,7 +172,6 @@ export async function runAudit(job, cfg, deps) {
   if (article.word_count < 50) {
     return fail('Found only ' + article.word_count + ' words of article text. If this is a URL, the page may load its text with JavaScript; paste the content instead.');
   }
-  const readability = analyzeReadability(article.body_text, inp.target_grade);
   const truncated = budgetArticle(article, cfg.maxPromptChars).truncated;
 
   // 2. Groq: relevancy, claims, related terms, intent
@@ -222,6 +221,15 @@ export async function runAudit(job, cfg, deps) {
       if (g.error) { gapFailed = true; errors.push('Section gaps: ' + g.error); }
       else gap = normalizeGap(g.data, competitors.length);
     }
+  }
+
+  // Readability, with the target grade taken from the top-ranking pages
+  const target = readabilityTarget(competitors.map((c) => c.grade), inp);
+  const readability = analyzeReadability(article.body_text, target.target);
+  readability.target_source = target.source;
+  if (target.source === 'competitors') {
+    readability.competitor_median_grade = target.competitor_median;
+    readability.competitor_pages = target.pages;
   }
 
   // 5. Plagiarism

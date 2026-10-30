@@ -38,6 +38,7 @@ export function competitorOutline(html, url, fallbackTitle) {
     url,
     title: a.title || fallbackTitle || '',
     word_count: a.word_count,
+    grade: a.word_count >= 200 ? analyzeReadability(a.body_text).grade : null,
     headings: a.sections.map((s) => s.heading).filter((h) => h && h.length <= 120).slice(0, 40),
   };
 }

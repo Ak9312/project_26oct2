@@ -7,7 +7,7 @@ const lib = loadSources(
   ['text.js', 'parse.js', 'readability.js', 'keywords.js', 'llm.js', 'scoring.js', 'input.js', 'external.js'],
   [
     'tokenizeWords', 'splitSentences', 'countPhrase', 'ariGrade', 'analyzeReadability', 'countPassive', 'findAdverbs',
-    'parseHtml', 'parsePasted', 'analyzeKeywords', 'densityPoints', 'extractJson', 'normalizeAnalysis',
+    'parseHtml', 'parsePasted', 'analyzeKeywords', 'densityPoints', 'depthPoints', 'readabilityTarget', 'competitorOutline', 'extractJson', 'normalizeAnalysis',
     'normalizeVerification', 'normalizeGap', 'buildReport', 'buildErrorReport',
     'normalizeInput', 'parseCopyscape', 'competitorUrls', 'rowsToObjects', 'plagiarismPoints',
   ]
@@ -84,18 +84,18 @@ test('keyword placement, density and term coverage are computed in code', () => 
   assert.equal(k.occurrences, 1);
   // 1 occurrence * 3 words / 203 words = 1.5%
   assert.equal(k.density, 1.5);
-  assert.equal(k.points.density, 4);
+  assert.equal(k.points.density, 2);
   // duplicate "Compost Bin" removed; vermicomposting not in text
   assert.deepEqual(k.terms.map((t) => [t.term, t.covered]), [['compost bin', true], ['vermicomposting', false]]);
-  assert.equal(k.points.related, 3);
+  assert.equal(k.points.related, 4);
   assert.equal(k.points.intent, 3);
 });
 
 test('density bands', () => {
-  assert.equal(lib.densityPoints(0.2), 0);
-  assert.equal(lib.densityPoints(0.4), 2);
-  assert.equal(lib.densityPoints(2.5), 4);
-  assert.equal(lib.densityPoints(3), 2);
+  assert.equal(lib.densityPoints(0.1), 0);
+  assert.equal(lib.densityPoints(0.4), 1);
+  assert.equal(lib.densityPoints(2.5), 2);
+  assert.equal(lib.densityPoints(3), 1);
   assert.equal(lib.densityPoints(5), 0);
 });
 
@@ -188,8 +188,8 @@ test('report totals and pass/fail', () => {
   const p = r.parameters;
   // accuracy: relevancy round(8.5)=9, claims round(12*3.5/4)=11, fresh 4, title 3 = 27
   assert.equal(p.accuracy.score, 27);
-  // sections: coverage 6, structure intro+conclusion+4 h2 = 3, depth: article words vs median 1100 -> low
-  assert.equal(p.sections.points.coverage, 6);
+  // sections: coverage 14*0.5 = 7, structure intro+conclusion+4 h2 = 3, depth: article words vs median 1100 -> low
+  assert.equal(p.sections.points.coverage, 7);
   assert.equal(p.sections.points.structure, 3);
   assert.equal(p.plagiarism.score, 10);
   assert.equal(r.total, p.accuracy.score + 15 + 16 + p.sections.score + 10);
@@ -274,4 +274,21 @@ test('article budget splits characters across sections', () => {
   const total = b.intro.length + b.sections.reduce((n, s) => n + s.text.length, 0);
   assert.ok(total <= 10000 + 5 * 4, 'total ' + total);
   assert.equal(llm.budgetArticle({ intro: 'short', sections: [{ heading: 'a', text: 'b' }] }, 14000).truncated, false);
+});
+
+test('length only loses points when the article is thin', () => {
+  assert.equal(lib.depthPoints(2), 2);
+  assert.equal(lib.depthPoints(0.5), 2);
+  assert.equal(lib.depthPoints(0.4), 1);
+  assert.equal(lib.depthPoints(0.1), 0);
+});
+
+test('readability target comes from the top pages unless the user picked one', () => {
+  assert.deepEqual(lib.readabilityTarget([10, 11, 8, 12], { target_auto: true, target_grade: 9 }).target, 11);
+  assert.equal(lib.readabilityTarget([10, 11, 8, 12], { target_auto: true }).source, 'competitors');
+  assert.equal(lib.readabilityTarget([15, 16, 17], { target_auto: true }).target, 12); // capped
+  assert.equal(lib.readabilityTarget([10, null], { target_auto: true }).target, 9); // too few pages
+  assert.deepEqual(lib.readabilityTarget([10, 11, 12], { target_auto: false, target_grade: 7 }), { target: 7, source: 'chosen' });
+  assert.equal(lib.normalizeInput({ content: 'x', heading: 'h', keyword: 'k' }).input.target_auto, true);
+  assert.equal(lib.normalizeInput({ content: 'x', heading: 'h', keyword: 'k', target_grade: 8 }).input.target_auto, false);
 });

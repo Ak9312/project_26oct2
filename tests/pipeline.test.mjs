@@ -118,7 +118,7 @@ test('full audit with every service working', async () => {
   assert.equal(p.accuracy.claim_counts.false, 1);
   assert.equal(p.accuracy.claim_counts.verified, 1);
   assert.equal(p.sections.competitor_count, 3);
-  assert.equal(p.sections.points.coverage, 3); // 0 covered + 0.5 thin of 2 topics → 12*0.25
+  assert.equal(p.sections.points.coverage, 4); // 0 covered + 0.5 thin of 2 topics → round(14*0.25)
   assert.equal(p.plagiarism.percent, 4);
   assert.equal(r.status, 'needs_review'); // false claim is a hard flag
   const groq = w.calls.filter((c) => c.kind === 'groq');

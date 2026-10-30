@@ -27,7 +27,7 @@ function Check2({ on, children }) {
 
 export default function NewAuditPage() {
   const [mode, setMode] = useState('url');
-  const [form, setForm] = useState({ url: '', heading: '', content: '', meta_description: '', keyword: '', secondary: '', target_grade: '9', market: 'in-en' });
+  const [form, setForm] = useState({ url: '', heading: '', content: '', meta_description: '', keyword: '', secondary: '', target_grade: 'auto', market: 'in-en' });
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
   const navigate = useNavigate();
@@ -39,7 +39,7 @@ export default function NewAuditPage() {
   async function submit(e) {
     e.preventDefault();
     setError(null);
-    const body = { keyword: form.keyword.trim(), secondary: form.secondary, target_grade: Number(form.target_grade), market: form.market };
+    const body = { keyword: form.keyword.trim(), secondary: form.secondary, target_grade: form.target_grade === 'auto' ? 'auto' : Number(form.target_grade), market: form.market };
     if (mode === 'url') {
       body.url = form.url.trim();
       if (!/^https?:\/\/\S+\.\S+/.test(body.url)) return setError({ message: 'Enter the full article URL, starting with https://' });
@@ -106,6 +106,7 @@ export default function NewAuditPage() {
                 <div className="space-y-2">
                   <Label htmlFor="grade">Target reading grade</Label>
                   <NativeSelect id="grade" value={form.target_grade} onChange={set('target_grade')}>
+                    <option value="auto">Match top-ranking pages (recommended)</option>
                     <option value="7">Grade 7 · very easy</option>
                     <option value="8">Grade 8</option>
                     <option value="9">Grade 9 · Hemingway default</option>
