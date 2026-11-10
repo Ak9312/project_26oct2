@@ -73,13 +73,13 @@ export default function NewAuditPage() {
                 </TabsList>
                 <TabsContent value="url" className="space-y-2">
                   <Label htmlFor="url">Article URL</Label>
-                  <Input id="url" type="url" inputMode="url" placeholder="https://yourblog.com/composting-at-home" value={form.url} onChange={set('url')} autoComplete="url" />
+                  <Input id="url" type="url" inputMode="url" placeholder="Paste the full link to one article or blog post (not a homepage), starting with https://" value={form.url} onChange={set('url')} autoComplete="url" />
                   <p className="text-xs text-muted-foreground">If the site blocks automated reading, switch to Paste text.</p>
                 </TabsContent>
                 <TabsContent value="paste" className="space-y-4">
                   <div className="space-y-2">
                     <Label htmlFor="heading">Heading (H1)</Label>
-                    <Input id="heading" placeholder="A beginner's guide to composting at home" value={form.heading} onChange={set('heading')} />
+                    <Input id="heading" placeholder="The article's main title, as it appears at the top of the page" value={form.heading} onChange={set('heading')} />
                   </div>
                   <div className="space-y-2">
                     <div className="flex items-baseline justify-between"><Label htmlFor="content">Article text</Label><span className="font-mono text-xs text-muted-foreground tabular">{words.toLocaleString()} words</span></div>
@@ -87,7 +87,7 @@ export default function NewAuditPage() {
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="meta">Meta description <span className="font-normal text-muted-foreground">(optional)</span></Label>
-                    <Input id="meta" placeholder="Learn how to compost at home in five simple steps" value={form.meta_description} onChange={set('meta_description')} />
+                    <Input id="meta" placeholder="The short summary shown under the title in Google results, if you have it" value={form.meta_description} onChange={set('meta_description')} />
                   </div>
                 </TabsContent>
               </Tabs>
@@ -97,11 +97,11 @@ export default function NewAuditPage() {
               <div className="grid gap-5 sm:grid-cols-2">
                 <div className="space-y-2">
                   <Label htmlFor="keyword">Primary keyword</Label>
-                  <Input id="keyword" placeholder="composting at home" value={form.keyword} onChange={set('keyword')} />
+                  <Input id="keyword" placeholder="The one search phrase this article should rank for" value={form.keyword} onChange={set('keyword')} />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="secondary">Secondary keywords <span className="font-normal text-muted-foreground">(comma-separated)</span></Label>
-                  <Input id="secondary" placeholder="compost bin, green waste, brown waste" value={form.secondary} onChange={set('secondary')} />
+                  <Input id="secondary" placeholder="Other phrases the article should also cover (optional)" value={form.secondary} onChange={set('secondary')} />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="grade">Target reading grade</Label>
