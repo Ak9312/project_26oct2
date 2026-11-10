@@ -17,6 +17,14 @@ test('tokenizer keeps contractions and hyphenated words', () => {
   assert.deepEqual(lib.tokenizeWords("Don't over-water it."), ["Don't", 'over-water', 'it']);
 });
 
+test('keyword matching ignores small linking words but keeps word order', () => {
+  assert.equal(lib.countPhrase('Best Budget Smartphones in India (2026)', 'best budget smartphones India'), 1);
+  assert.equal(lib.countPhrase('best budget smartphones India', 'best budget smartphones in India'), 1);
+  assert.equal(lib.countPhrase('Composting at home is easy. A compost bin at home helps.', 'composting at home'), 1);
+  assert.equal(lib.countPhrase('India has budget smartphones', 'budget smartphones India'), 0);
+  assert.equal(lib.countPhrase('smartphones in the big cities of India', 'smartphones India'), 0);
+});
+
 test('sentence split protects abbreviations', () => {
   const s = lib.splitSentences('Use greens, e.g. fruit peel. Add browns! Done?');
   assert.equal(s.length, 3);

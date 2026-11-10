@@ -45,11 +45,22 @@ export function escapeRegExp(s) {
   return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+// Small linking words that writers add or drop around a keyword without
+// changing it: "best phones India" should match "best phones in India".
+const LINK_WORDS = ['in', 'of', 'for', 'the', 'a', 'an', 'to', 'and', 'on', 'at', 'with', 'from', 'by', 'under', '&'];
+
 // Case-insensitive whole-phrase count with flexible whitespace/hyphens.
+// Linking words in the keyword are optional and up to two may sit between its
+// main words, so "budget phones India" matches "budget phones in India" and the
+// other way round. The main words must still appear in the same order.
 export function countPhrase(text, phrase) {
-  const words = tokenizeWords(phrase);
+  const all = tokenizeWords(phrase);
+  const isLink = (w) => LINK_WORDS.includes(w.toLowerCase());
+  const words = all.some((w) => !isLink(w)) ? all.filter((w) => !isLink(w)) : all;
   if (!words.length) return 0;
-  const pattern = words.map(escapeRegExp).join('[\\s\\-]+');
+  const link = '(?:' + LINK_WORDS.map(escapeRegExp).join('|') + ')';
+  const gap = '(?:[\\s\\-]+' + link + '){0,2}[\\s\\-]+';
+  const pattern = words.map(escapeRegExp).join(gap);
   const re = new RegExp('(?<![\\p{L}\\p{N}])' + pattern + '(?![\\p{L}\\p{N}])', 'giu');
   const m = String(text || '').match(re);
   return m ? m.length : 0;
