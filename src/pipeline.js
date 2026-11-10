@@ -210,11 +210,22 @@ export async function runAudit(job, cfg, deps) {
   } else {
     const s = await serpSearch(deps, cfg, inp.keyword, inp, 10);
     if (s.error) errors.push('Section gaps: SerpAPI search failed (' + String(s.error).slice(0, 100) + ')');
-    const picks = s.json ? competitorUrls(s.json, inp.url, cfg.competitorPages) : [];
-    const pages = await Promise.all(picks.map((p) => fetchText(deps, p.url, { headers: { 'User-Agent': AUDIT_UA, Accept: 'text/html,application/xhtml+xml' }, redirect: 'follow' }, 12000)));
-    competitors = picks
-      .map((p, i) => competitorOutline(pages[i].ok ? pages[i].text : '', p.url, p.title))
-      .filter((c) => c.word_count >= 200 || c.headings.length >= 3);
+    // Many big sites block automated readers, so try all top 10 results and
+    // keep the first COMPETITOR_PAGES that can actually be read.
+    const picks = s.json ? competitorUrls(s.json, inp.url, 10) : [];
+    const pages = await Promise.all(picks.map((p) => fetchText(deps, p.url, { headers: { 'User-Agent': AUDIT_UA, Accept: 'text/html,application/xhtml+xml', 'Accept-Language': 'en' }, redirect: 'follow' }, 12000)));
+    const outlines = picks.map((p, i) => competitorOutline(pages[i].ok ? pages[i].text : '', p.url, p.title));
+    competitors = outlines
+      .filter((c) => c.word_count >= 200 || c.headings.length >= 3)
+      .slice(0, cfg.competitorPages);
+    if (picks.length && !competitors.length) {
+      const why = picks.map((p, i) => {
+        const r = pages[i];
+        const reason = r.error ? 'could not connect' : !r.ok ? 'blocked (' + r.status + ')' : 'too little readable text';
+        return hostOf(p.url) + ': ' + reason;
+      });
+      errors.push('Section gaps: none of the top pages could be read (' + why.join('; ').slice(0, 300) + ')');
+    }
     if (competitors.length) {
       await pause();
       const g = await callGroq(deps, cfg, buildGapPrompt(article, competitors, inp.keyword), 1500, timeLeft);

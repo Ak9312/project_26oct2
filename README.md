@@ -76,7 +76,7 @@ The top right of the site shows **Ready** when the Groq key and storage are in p
 | `GROQ_REASONING_EFFORT` | `low` | For `openai/gpt-oss-*` models: `low`, `medium` or `high` |
 | `MAX_PROMPT_CHARS` | `14000` | Most article text sent to the AI in one request |
 | `LLM_PAUSE_SECONDS` | `15` | Pause between AI calls, to stay inside Groq's per-minute limit |
-| `COMPETITOR_PAGES` | `6` | Top-ranking pages compared for missing sections (max 10) |
+| `COMPETITOR_PAGES` | `6` | Top-ranking pages compared for missing sections: the first ones of the top 10 Google results that can be read (max 10) |
 | `MAX_CLAIM_SEARCHES` | `5` | Most claims fact-checked per audit (each uses one SerpAPI search) |
 | `PLAGIARISM_PHRASES` | `3` | Sentences searched for the free plagiarism check (0 turns it off) |
 | `MOCK_MODE` | – | `1` shows built-in sample data and calls no outside service |
