@@ -150,8 +150,23 @@ test('Groq rate limit that never clears ends with a clear error, not a hang', as
   const r = await runAudit(job(), auditConfig(ENV), w.deps);
   assert.equal(r.status, 'error');
   assert.match(r.review_reasons.join(' '), /Groq rate limit reached \(429\)/);
-  assert.equal(w.calls.filter((c) => c.kind === 'groq' && c.body.max_completion_tokens === 2500).length, 4);
+  assert.equal(w.calls.filter((c) => c.kind === 'groq' && c.body.max_completion_tokens === 4000).length, 4);
   assert.ok(r.parameters.readability.score > 0, 'code-based checks still run');
+});
+
+test('Groq "Failed to generate JSON" is retried once with a bigger token budget', async () => {
+  let first = true;
+  const w = world({
+    groq: [
+      () => { if (first) { first = false; return response(400, { error: { message: "Failed to generate JSON. Please adjust your prompt. See 'failed_generation' for more details.", code: 'json_validate_failed' } }); } },
+      analysisOk, verifyOk, gapOk,
+    ],
+  });
+  const r = await runAudit(job(), auditConfig(ENV), w.deps);
+  const analysisCalls = w.calls.filter((c) => c.kind === 'groq').slice(0, 2).map((c) => c.body.max_completion_tokens);
+  assert.deepEqual(analysisCalls, [4000, 8000]);
+  assert.notEqual(r.status, 'error');
+  assert.ok(!r.flags.some((f) => f.code === 'step_error'));
 });
 
 test('a wrong Groq key is not retried', async () => {

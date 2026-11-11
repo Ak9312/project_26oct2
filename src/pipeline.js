@@ -77,9 +77,10 @@ async function fetchJson(deps, url, opts, ms) {
 export async function callGroq(deps, cfg, prompt, maxTokens, timeLeft) {
   const keyProblem = cfg.groqKeyProblem !== undefined ? cfg.groqKeyProblem : groqKeyProblem(cfg.groqKey);
   if (keyProblem) return { error: keyProblem, data: {} };
-  const body = JSON.stringify(groqBody(cfg.model, prompt, maxTokens, cfg.reasoningEffort));
+  let tokens = maxTokens;
   let last = null;
   for (let attempt = 0; attempt < 4; attempt++) {
+    const body = JSON.stringify(groqBody(cfg.model, prompt, tokens, cfg.reasoningEffort));
     const budget = timeLeft() - 20000;
     if (budget < 5000) break;
     const r = await fetchJson(deps, GROQ_URL, {
@@ -95,6 +96,14 @@ export async function callGroq(deps, cfg, prompt, maxTokens, timeLeft) {
     }
     const message = (r.json && r.json.error && r.json.error.message) || r.error || ('HTTP ' + r.status);
     last = { error: { message: message, httpCode: String(r.status || '') } };
+    // Groq returns 400 "Failed to generate JSON" when the answer was cut off or
+    // came out malformed; on long articles the reasoning model often runs out of
+    // tokens. Retry once with double the token budget.
+    const badJson = r.status === 400 && /failed to generate json|json_validate_failed/i.test(message + ' ' + JSON.stringify((r.json && r.json.error) || {}));
+    if (badJson && tokens < maxTokens * 2) {
+      tokens = Math.min(8000, maxTokens * 2);
+      continue;
+    }
     const retryable = r.status === 429 || r.status >= 500 || r.status === 0;
     if (!retryable || attempt === 3) break;
     const header = r.headers && typeof r.headers.get === 'function' ? Number(r.headers.get('retry-after')) : NaN;
@@ -175,7 +184,7 @@ export async function runAudit(job, cfg, deps) {
   const truncated = budgetArticle(article, cfg.maxPromptChars).truncated;
 
   // 2. Groq: relevancy, claims, related terms, intent
-  const a = await callGroq(deps, cfg, buildAnalysisPrompt(article, inp, cfg.maxPromptChars), 2500, timeLeft);
+  const a = await callGroq(deps, cfg, buildAnalysisPrompt(article, inp, cfg.maxPromptChars), 4000, timeLeft);
   const analysis = normalizeAnalysis(a.data, article);
   // Only the first few claims are searched, to save SerpAPI searches.
   analysis.claims = analysis.claims.slice(0, cfg.maxClaimSearches);
