@@ -51,14 +51,14 @@ export function ScoreRadar({ scores, height = 240 }) {
 }
 
 // One labelled bar per parameter.
-export function ParamBar({ label, score, max, note, href }) {
+export function ParamBar({ label, score, max, note, href, action }) {
   const b = band(score, max);
   const pct = max ? Math.max(0, Math.min(100, ((Number(score) || 0) / max) * 100)) : 0;
   const Wrapper = href ? 'a' : 'div';
   return (
     <Wrapper href={href} className={cn('block rounded-lg', href && 'group -mx-2 px-2 py-1.5 hover:bg-muted/60')}>
       <div className="mb-1.5 flex items-baseline justify-between gap-3 text-sm">
-        <span className="font-medium">{label}</span>
+        <span className="flex items-center gap-1.5 font-medium">{label}{action}</span>
         <span className="font-mono tabular text-sm">
           <span className={cn('font-semibold', BAND_TEXT[b])}>{score ?? '—'}</span>
           <span className="text-muted-foreground">/{max}</span>
