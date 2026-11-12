@@ -50,6 +50,21 @@ function needsReview(e) {
   return e.status === 'needs_review' || e.status === 'error';
 }
 
+// Which audits a "clear history" request removes: every audit, only the ones
+// that failed (status 'error'), or a list of IDs.
+export function idsToDelete(index, scope, ids) {
+  const audits = index.audits || [];
+  if (scope === 'all') return audits.map((e) => e.audit_id);
+  if (scope === 'failed') return audits.filter((e) => e.status === 'error').map((e) => e.audit_id);
+  const want = new Set(Array.isArray(ids) ? ids : []);
+  return audits.filter((e) => want.has(e.audit_id)).map((e) => e.audit_id);
+}
+
+export function withoutEntries(index, ids) {
+  const drop = new Set(ids);
+  return Object.assign({}, index, { audits: (index.audits || []).filter((e) => !drop.has(e.audit_id)) });
+}
+
 export function listResponse(index, passMark) {
   const audits = (index.audits || []).slice().sort(byNewest);
   return {

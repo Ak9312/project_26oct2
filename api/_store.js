@@ -5,7 +5,7 @@
 // - MOCK_MODE=1: an in-memory store seeded with sample audits.
 // Free Hobby plans include 2,000 Blob writes a month, so an audit costs two
 // writes (its report and one index update) and reviews/validation one each.
-import { get, put, head, list, BlobPreconditionFailedError } from '@vercel/blob';
+import { get, put, head, list, del, BlobPreconditionFailedError } from '@vercel/blob';
 import { RECORDS, INDEX } from './_mock-data.js';
 import { upsertEntry, summarize } from './_engine.js';
 
@@ -112,6 +112,11 @@ const blobStore = {
   async putRecord(record) {
     await writeJson(recordPath(record.audit_id), record);
   },
+  // Deletes saved reports. The list sync re-adds any report that has no list
+  // entry, so reports must be deleted, not just dropped from the index.
+  async deleteRecords(ids) {
+    for (let i = 0; i < ids.length; i += 100) await del(ids.slice(i, i + 100).map(recordPath));
+  },
   // fn(index) returns { index, ...extra } to save, or { status, response }
   // to stop. Retries when another request changed the index meanwhile.
   // The last attempt writes without the ETag check, so a change is never
@@ -161,6 +166,7 @@ const memoryStore = {
   async getIndexSynced() { return this.getIndex(); },
   async getRecord(id) { materialize(); return mem.records[id] ? JSON.parse(JSON.stringify(mem.records[id])) : null; },
   async putRecord(record) { mem.records[record.audit_id] = JSON.parse(JSON.stringify(record)); },
+  async deleteRecords(ids) { ids.forEach((id) => { delete mem.records[id]; }); },
   async updateIndex(fn) {
     materialize();
     const out = fn(JSON.parse(JSON.stringify(mem.index)));

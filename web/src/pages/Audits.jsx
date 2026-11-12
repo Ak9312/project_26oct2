@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Cell, Tooltip as RTooltip, CartesianGrid } from 'recharts';
-import { Plus, Download, Search, FileText, Gauge, Flag, CheckCircle2, ArrowUpRight, RefreshCw } from 'lucide-react';
+import { Plus, Download, Search, FileText, Gauge, Flag, CheckCircle2, ArrowUpRight, RefreshCw, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button, Card, CardHeader, CardTitle, CardDescription, CardContent, Input, Table, THead, TBody, TR, TH, TD, Skeleton, Badge } from '@/components/ui';
 import { PageHeader, ErrorNote } from '@/components/layout';
@@ -114,6 +114,7 @@ export default function AuditsPage() {
         actions={<>
           <Button variant="outline" onClick={load} disabled={loading} aria-label="Refresh the list"><RefreshCw className={loading ? 'animate-spin' : ''} />Refresh</Button>
           <Button variant="outline" onClick={exportCsv}><Download />Download CSV</Button>
+          <ClearHistory audits={audits} onDone={load} />
         </>}
       />
       <ErrorNote error={error} />
@@ -185,6 +186,53 @@ export default function AuditsPage() {
           </Table>
         )}
       </Card>
+    </>
+  );
+}
+
+// Deletes audits for good: all of them, or only the ones that failed.
+function ClearHistory({ audits, onDone }) {
+  const ref = useRef(null);
+  const [busy, setBusy] = useState(false);
+  const failed = audits.filter((a) => a.status === 'error').length;
+  async function clear(scope) {
+    setBusy(true);
+    try {
+      const r = await data('delete', { scope });
+      toast.success(r.deleted ? `Deleted ${r.deleted} audit${r.deleted === 1 ? '' : 's'}` : 'Nothing to delete');
+      ref.current.close();
+      onDone();
+    } catch (e) {
+      if (e.status !== 401) toast.error(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <>
+      <Button variant="outline" onClick={() => ref.current.showModal()} disabled={!audits.length}><Trash2 />Clear history</Button>
+      <dialog
+        ref={ref}
+        onClick={(ev) => { if (ev.target === ref.current && !busy) ref.current.close(); }}
+        className="m-auto w-[min(28rem,calc(100vw-2rem))] rounded-xl border bg-card p-0 text-card-foreground shadow-xl backdrop:bg-black/40"
+      >
+        <div className="flex items-start justify-between gap-4 border-b px-5 py-4">
+          <div>
+            <h2 className="text-base font-semibold">Clear audit history</h2>
+            <p className="mt-0.5 text-sm text-muted-foreground">Deleted audits, their reports, reviews and your validation scores can't be recovered.</p>
+          </div>
+          <button type="button" onClick={() => ref.current.close()} disabled={busy} className="rounded p-1 text-muted-foreground hover:bg-muted" aria-label="Close"><X className="size-4" /></button>
+        </div>
+        <div className="flex flex-col gap-2 px-5 py-4">
+          <Button variant="outline" disabled={busy || !failed} onClick={() => clear('failed')}>
+            <Trash2 />Delete failed audits only ({failed})
+          </Button>
+          <Button variant="destructive" disabled={busy} onClick={() => clear('all')}>
+            <Trash2 />Delete all {audits.length} audits
+          </Button>
+          <Button variant="ghost" disabled={busy} onClick={() => ref.current.close()}>Cancel</Button>
+        </div>
+      </dialog>
     </>
   );
 }

@@ -4,7 +4,7 @@ import { send, requireAuth, readBody, validAuditId, NO_STORAGE } from './_lib.js
 import { getStore } from './_store.js';
 import {
   auditConfig, listResponse, getResponse, reviewListResponse, applyReview, applyValidation,
-  replaceEntry, validationResponse,
+  replaceEntry, validationResponse, idsToDelete, withoutEntries,
 } from './_engine.js';
 
 export default async function handler(req, res) {
@@ -44,6 +44,15 @@ export default async function handler(req, res) {
           return r.entry ? { index: replaceEntry(idx, r.entry), my_total: r.my_total } : r;
         });
         return out.index ? send(res, 200, { saved: true, my_total: out.my_total }) : send(res, out.status, out.response);
+      }
+      case 'delete': {
+        // Clear history: scope 'all', 'failed', or 'ids' with audit_ids.
+        if (['all', 'failed', 'ids'].indexOf(body.scope) < 0) return send(res, 400, { error: 'scope must be all, failed or ids' });
+        const ids = idsToDelete(await store.getIndex(), body.scope, body.audit_ids).filter(validAuditId);
+        if (!ids.length) return send(res, 200, { deleted: 0 });
+        await store.deleteRecords(ids);
+        await store.updateIndex((idx) => ({ index: withoutEntries(idx, ids) }));
+        return send(res, 200, { deleted: ids.length });
       }
       default:
         return send(res, 400, { error: 'Unknown action' });

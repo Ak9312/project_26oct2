@@ -6,7 +6,8 @@ import { Button, Card, CardHeader, CardTitle, CardDescription, CardContent, Badg
 import { ErrorNote, useApp } from '@/components/layout';
 import { ScoreGauge, ScoreRadar, ParamBar } from '@/components/charts';
 import { StatusBadge } from '@/components/status';
-import { HowCalculated, explainAccuracy, explainReadability, explainKeywords, explainSections, explainOriginality } from '@/components/explain';
+import { HowCalculated, TopFixes, explainAccuracy, explainReadability, explainKeywords, explainSections, explainOriginality } from '@/components/explain';
+import { topFixes } from '@/lib/fixes';
 import { data } from '@/lib/api';
 import { fmtDate, fmtNum, cn, band, BAND_TEXT } from '@/lib/utils';
 
@@ -350,6 +351,14 @@ export default function ReportPage() {
   const needs = rep.status === 'needs_review' || failed;
   const scores = { accuracy: A.score, readability: R.score, keywords: K.score, sections: S.score, plagiarism: P.score };
   const missing = S.topics.filter((t) => t.coverage !== 'covered').length;
+  const ex = {
+    accuracy: explainAccuracy(A, rep),
+    readability: explainReadability(R),
+    keywords: explainKeywords(K, R.words || rep.article.word_count),
+    sections: explainSections(S),
+    originality: explainOriginality(P),
+  };
+  const top = topFixes(Object.values(ex));
 
   return (
     <>
@@ -400,16 +409,18 @@ export default function ReportPage() {
           <CardContent><ScoreRadar scores={scores} height={260} /></CardContent>
         </Card>
         <Card className="lg:col-span-4">
-          <CardHeader><CardTitle>Breakdown</CardTitle><CardDescription>Points per parameter. Click How? to see the calculation.</CardDescription></CardHeader>
+          <CardHeader><CardTitle>Breakdown</CardTitle><CardDescription>Points per parameter. Click How? for the calculation and how to fix it.</CardDescription></CardHeader>
           <CardContent className="space-y-2.5">
-            <ParamBar label="Accuracy & relevancy" action={<HowCalculated explanation={explainAccuracy(A)} />} score={A.score} max={30} note={A.claim_counts.false ? `${A.claim_counts.false} contradicted claim${A.claim_counts.false > 1 ? 's' : ''}` : `${A.claim_counts.verified} of ${A.claim_counts.total} claims verified`} />
-            <ParamBar label="Readability" action={<HowCalculated explanation={explainReadability(R)} />} score={R.score} max={20} note={`Grade ${fmtNum(R.grade, 1)} · target ${R.target_grade}`} />
-            <ParamBar label="Keywords" action={<HowCalculated explanation={explainKeywords(K)} />} score={K.score} max={20} note={`Density ${fmtNum(K.density, 1)}%`} />
-            <ParamBar label="Missing sections" action={<HowCalculated explanation={explainSections(S)} />} score={S.score} max={20} note={S.competitor_count ? `${missing} subtopic${missing === 1 ? '' : 's'} missing or thin` : 'Top pages not compared'} />
-            <ParamBar label="Originality" action={<HowCalculated explanation={explainOriginality(P)} />} score={P.score} max={10} note={!P.checked ? 'Not checked' : P.method === 'phrase' ? `${P.phrases_found} of ${P.phrases_checked} sentences found elsewhere` : `${fmtNum(P.percent, 1)}% matched`} />
+            <ParamBar label="Accuracy & relevancy" action={<HowCalculated explanation={ex.accuracy} />} score={A.score} max={30} note={A.claim_counts.false ? `${A.claim_counts.false} contradicted claim${A.claim_counts.false > 1 ? 's' : ''}` : `${A.claim_counts.verified} of ${A.claim_counts.total} claims verified`} />
+            <ParamBar label="Readability" action={<HowCalculated explanation={ex.readability} />} score={R.score} max={20} note={`Grade ${fmtNum(R.grade, 1)} · target ${R.target_grade}`} />
+            <ParamBar label="Keywords" action={<HowCalculated explanation={ex.keywords} />} score={K.score} max={20} note={`Density ${fmtNum(K.density, 1)}%`} />
+            <ParamBar label="Missing sections" action={<HowCalculated explanation={ex.sections} />} score={S.score} max={20} note={S.competitor_count ? `${missing} subtopic${missing === 1 ? '' : 's'} missing or thin` : 'Top pages not compared'} />
+            <ParamBar label="Originality" action={<HowCalculated explanation={ex.originality} />} score={P.score} max={10} note={!P.checked ? 'Not checked' : P.method === 'phrase' ? `${P.phrases_found} of ${P.phrases_checked} sentences found elsewhere` : `${fmtNum(P.percent, 1)}% matched`} />
           </CardContent>
         </Card>
       </div>
+
+      {top.length ? <div className="mt-4"><TopFixes items={top} /></div> : null}
 
       <Card className="mt-4">
         <CardContent className="p-5 sm:p-6">

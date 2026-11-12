@@ -740,7 +740,9 @@ function depthPoints(ratio) {
   return 0;
 }
 
-function accuracyBlock(analysis, verification) {
+// When the AI step failed nothing in this block was checked, so every part is
+// 0 and marked not checked; an empty claim list must not earn full marks.
+function accuracyBlock(analysis, verification, aiFailed) {
   const scored = analysis.sections.filter((s) => s.score !== null);
   const relevancy = scored.length
     ? Math.round(scored.reduce((n, s) => n + s.score, 0) / scored.length)
@@ -749,14 +751,15 @@ function accuracyBlock(analysis, verification) {
   const v = verification.filter((c) => c.status === 'verified').length;
   const u = verification.filter((c) => c.status === 'unverified').length;
   const f = verification.filter((c) => c.status === 'false').length;
-  const claimsPts = n ? Math.round((12 * (v + 0.5 * u)) / n) : 12;
+  const claimsPts = aiFailed ? 0 : n ? Math.round((12 * (v + 0.5 * u)) / n) : 12;
   const points = {
-    relevancy,
+    relevancy: aiFailed ? 0 : relevancy,
     claims: claimsPts,
-    freshness: analysis.freshness.score,
-    title_promise: analysis.title_promise.score,
+    freshness: aiFailed ? 0 : analysis.freshness.score,
+    title_promise: aiFailed ? 0 : analysis.title_promise.score,
   };
   return {
+    ai_checked: !aiFailed,
     points,
     score: points.relevancy + points.claims + points.freshness + points.title_promise,
     max: 30,
@@ -839,7 +842,7 @@ function plagiarismBlock(p) {
 
 function buildReport(ctx) {
   const passMark = Number(ctx.config && ctx.config.pass_mark) || 70;
-  const accuracy = accuracyBlock(ctx.analysis, ctx.verification || []);
+  const accuracy = accuracyBlock(ctx.analysis, ctx.verification || [], ctx.analysis_failed === true);
   const readability = ctx.readability;
   const keywords = ctx.keywords;
   const sections = sectionsBlock(ctx.article, ctx.competitors || [], ctx.gap || [], ctx.gap_failed === true);
@@ -887,6 +890,7 @@ function buildReport(ctx) {
     audit_id: ctx.audit_id,
     created_at: ctx.created_at,
     status,
+    analysis_failed: ctx.analysis_failed === true,
     pass_mark: passMark,
     total,
     review_reasons: reasons,
@@ -1216,6 +1220,21 @@ function publicSummary(e) {
 
 function needsReview(e) {
   return e.status === 'needs_review' || e.status === 'error';
+}
+
+// Which audits a "clear history" request removes: every audit, only the ones
+// that failed (status 'error'), or a list of IDs.
+function idsToDelete(index, scope, ids) {
+  const audits = index.audits || [];
+  if (scope === 'all') return audits.map((e) => e.audit_id);
+  if (scope === 'failed') return audits.filter((e) => e.status === 'error').map((e) => e.audit_id);
+  const want = new Set(Array.isArray(ids) ? ids : []);
+  return audits.filter((e) => want.has(e.audit_id)).map((e) => e.audit_id);
+}
+
+function withoutEntries(index, ids) {
+  const drop = new Set(ids);
+  return Object.assign({}, index, { audits: (index.audits || []).filter((e) => !drop.has(e.audit_id)) });
 }
 
 function listResponse(index, passMark) {
@@ -1629,4 +1648,4 @@ async function runAudit(job, cfg, deps) {
   });
 }
 
-export { normalizeInput, makeAuditId, runAudit, auditConfig, groqKeyProblem, buildReport, buildErrorReport, readabilityTarget, summarize, upsertEntry, replaceEntry, listResponse, getResponse, reviewListResponse, applyReview, applyValidation, validationResponse, toCsv };
+export { normalizeInput, makeAuditId, runAudit, auditConfig, groqKeyProblem, buildReport, buildErrorReport, readabilityTarget, summarize, upsertEntry, replaceEntry, listResponse, getResponse, reviewListResponse, applyReview, applyValidation, validationResponse, toCsv, idsToDelete, withoutEntries };

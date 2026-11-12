@@ -18,12 +18,13 @@ const fake = {
     files.set(path, { body, etag: '"e' + (++n) + '"' });
     return {};
   },
+  async del(paths) { [].concat(paths).forEach((p) => files.delete(p)); },
   async list({ prefix }) { return { hasMore: false, blobs: [...files.keys()].filter((k) => k.startsWith(prefix)).map((pathname) => ({ pathname })) }; },
 };
 mock.module('@vercel/blob', { namedExports: fake });
 process.env.BLOB_READ_WRITE_TOKEN = 'test';
 const { getStore } = await import('../api/_store.js');
-const { buildErrorReport, summarize, upsertEntry } = await import('../api/_engine.js');
+const { buildErrorReport, summarize, upsertEntry, idsToDelete, withoutEntries } = await import('../api/_engine.js');
 
 const rep = (id) => buildErrorReport({ audit_id: id, created_at: '2026-10-27T' + id.slice(-2) + ':00:00Z', input: { url: 'https://x.test/' + id, keyword: 'k' }, error: 'x' });
 
@@ -42,4 +43,21 @@ test('reports missing from the list are added back', async () => {
   const idx = await s.getIndexSynced();
   assert.ok(idx.audits.some((e) => e.audit_id === 'aud_test_000009'));
   assert.equal(idx.audits.length, 4);
+});
+
+test('clearing history deletes reports so the list sync cannot bring them back', async () => {
+  const s = getStore();
+  const ids = idsToDelete(await s.getIndex(), 'ids', ['aud_test_000001', 'aud_test_000009']);
+  assert.deepEqual(ids.sort(), ['aud_test_000001', 'aud_test_000009']);
+  await s.deleteRecords(ids);
+  await s.updateIndex((idx) => ({ index: withoutEntries(idx, ids) }));
+  assert.equal(await s.getRecord('aud_test_000001'), null);
+  // Force the next sync to list the store again.
+  globalThis.__cqaSync.at = 0;
+  const idx = await s.getIndexSynced();
+  assert.ok(!idx.audits.some((e) => ids.includes(e.audit_id)));
+  assert.equal(idx.audits.length, 2);
+  // 'failed' picks every error report (these test reports are all errors).
+  assert.equal(idsToDelete(idx, 'failed').length, 2);
+  assert.equal(idsToDelete(idx, 'all').length, 2);
 });
