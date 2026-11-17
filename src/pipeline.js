@@ -5,6 +5,8 @@
 // Depends on text.js, parse.js, readability.js, keywords.js, llm.js,
 // scoring.js, input.js, external.js and phrasecheck.js. Network access and timers come in
 // through `deps` so the tests can run it without the internet.
+// Every step is timed by the monitor.js tracer; the run log is attached to
+// the report as report.run_log and shown on the Monitoring page.
 
 const AUDIT_UA = 'Mozilla/5.0 (compatible; ContentQualityAuditor/1.0; +https://github.com/Ak9312/project_26oct2)';
 
@@ -77,6 +79,14 @@ async function fetchJson(deps, url, opts, ms) {
 export async function callGroq(deps, cfg, prompt, maxTokens, timeLeft) {
   const keyProblem = cfg.groqKeyProblem !== undefined ? cfg.groqKeyProblem : groqKeyProblem(cfg.groqKey);
   if (keyProblem) return { error: keyProblem, data: {} };
+  const tr = deps.trace || null;
+  if (tr) tr.aiCall();
+  const out = await callGroqInner(deps, cfg, prompt, maxTokens, timeLeft, tr);
+  if (out.error && tr) tr.aiFailed();
+  return out;
+}
+
+async function callGroqInner(deps, cfg, prompt, maxTokens, timeLeft, tr) {
   let tokens = maxTokens;
   let last = null;
   for (let attempt = 0; attempt < 4; attempt++) {
@@ -89,6 +99,7 @@ export async function callGroq(deps, cfg, prompt, maxTokens, timeLeft) {
       body,
     }, Math.min(90000, budget));
     if (r.status === 200 && r.json) {
+      if (tr && r.json.usage) tr.tokens(r.json.usage.total_tokens);
       const failure = llmFailure(r.json);
       if (failure) return { error: failure, data: {} };
       try { return { error: '', data: extractJson(llmText(r.json)) }; }
@@ -102,6 +113,7 @@ export async function callGroq(deps, cfg, prompt, maxTokens, timeLeft) {
     const badJson = r.status === 400 && /failed to generate json|json_validate_failed/i.test(message + ' ' + JSON.stringify((r.json && r.json.error) || {}));
     if (badJson && tokens < maxTokens * 2) {
       tokens = Math.min(8000, maxTokens * 2);
+      if (tr) tr.retry('Groq could not make valid JSON: retried with double tokens');
       continue;
     }
     const retryable = r.status === 429 || r.status >= 500 || r.status === 0;
@@ -109,6 +121,7 @@ export async function callGroq(deps, cfg, prompt, maxTokens, timeLeft) {
     const header = r.headers && typeof r.headers.get === 'function' ? Number(r.headers.get('retry-after')) : NaN;
     const waitS = Math.min(20, Math.max(2, Number.isFinite(header) && header > 0 ? header : 5 * (attempt + 1)));
     if (timeLeft() - waitS * 1000 < 30000) break;
+    if (tr) tr.retry((r.status === 429 ? 'Rate limit (429)' : r.status ? 'Groq error ' + r.status : 'Network error') + ': waited ' + waitS + ' s and retried');
     await deps.sleep(waitS * 1000);
   }
   if (!last) return { error: 'Ran out of time before Groq could answer (Vercel allows 5 minutes per audit).', data: {} };
@@ -153,7 +166,27 @@ async function copyscapeCheck(deps, cfg, text) {
   return parseCopyscape(r.json);
 }
 
+// Runs the audit with a tracer, so every report carries its run log, even
+// when the audit fails or crashes part-way.
 export async function runAudit(job, cfg, deps) {
+  const tr = makeTracer(deps.now);
+  const d = Object.assign({}, deps, { fetch: tr.wrapFetch(deps.fetch), trace: tr });
+  let report;
+  try {
+    report = await auditSteps(job, cfg, d, tr);
+  } catch (e) {
+    tr.crashed(e);
+    report = buildErrorReport({
+      audit_id: job.audit_id, created_at: job.created_at, input: job.input,
+      error: 'Unexpected error while auditing: ' + String((e && e.message) || e).slice(0, 200),
+      config: { pass_mark: cfg.passMark, model: cfg.model },
+    });
+  }
+  report.run_log = tr.finish(report, job, cfg);
+  return report;
+}
+
+async function auditSteps(job, cfg, deps, tr) {
   const start = deps.now();
   const timeLeft = () => cfg.deadlineMs - (deps.now() - start);
   const pause = async () => {
@@ -168,23 +201,30 @@ export async function runAudit(job, cfg, deps) {
   // 1. Read the article
   let article;
   if (inp.url) {
+    tr.begin('fetch');
     const r = await fetchText(deps, inp.url, { headers: { 'User-Agent': AUDIT_UA, Accept: 'text/html,application/xhtml+xml' }, redirect: 'follow' }, 20000);
     if (!r.ok || r.text.length < 200) {
       const why = r.error || ('HTTP ' + r.status);
+      tr.end('failed', 'Could not fetch the page (' + why.slice(0, 120) + ')');
       return fail("Couldn't fetch " + inp.url + ' (' + why.slice(0, 120) + '). The site may block automated requests; paste the content instead.');
     }
     article = parseHtml(r.text, inp.url);
     if (inp.meta_description && !article.meta_description) article.meta_description = inp.meta_description;
   } else {
+    tr.begin('fetch');
     article = parsePasted(inp.heading, inp.content, inp.meta_description);
   }
   if (article.word_count < 50) {
+    tr.end('failed', 'Only ' + article.word_count + ' words of article text found');
     return fail('Found only ' + article.word_count + ' words of article text. If this is a URL, the page may load its text with JavaScript; paste the content instead.');
   }
+  tr.end(inp.url ? 'ok' : 'skipped', '', inp.url ? article.word_count + ' words read' : 'Pasted text, nothing to fetch');
   const truncated = budgetArticle(article, cfg.maxPromptChars).truncated;
 
   // 2. Groq: relevancy, claims, related terms, intent
+  tr.begin('ai_analysis');
   const a = await callGroq(deps, cfg, buildAnalysisPrompt(article, inp, cfg.maxPromptChars), 4000, timeLeft);
+  tr.end(a.error ? 'failed' : 'ok', a.error, truncated ? 'Long article: only the first part was sent to the AI' : '');
   const analysis = normalizeAnalysis(a.data, article);
   // Only the first few claims are searched, to save SerpAPI searches.
   analysis.claims = analysis.claims.slice(0, cfg.maxClaimSearches);
@@ -193,11 +233,15 @@ export async function runAudit(job, cfg, deps) {
 
   // 3. Search each claim, then let Groq judge it from those results only
   let verification = [];
+  if (a.error) tr.skip('claim_check', 'Skipped because the AI analysis failed');
+  else if (!analysis.claims.length) tr.skip('claim_check', 'The AI found no checkable claims');
   if (!a.error && analysis.claims.length) {
+    tr.begin('claim_check');
     const blank = analysis.claims.map((c) => ({ claim: c.claim, results: [] }));
     if (!cfg.serpKey) {
       verification = normalizeVerification({}, blank);
       errors.push('Claim check: SERPAPI_KEY is not set, so claims could not be searched');
+      tr.end('failed', 'SERPAPI_KEY is not set');
     } else {
       const serps = await Promise.all(analysis.claims.map((c) => serpSearch(deps, cfg, c.search_query, inp, 5)));
       const items = analysis.claims.map((c, i) => ({ claim: c.claim, results: serpOrganic(serps[i].json, 3) }));
@@ -205,6 +249,8 @@ export async function runAudit(job, cfg, deps) {
       const v = await callGroq(deps, cfg, buildVerifyPrompt(items), 1500, timeLeft);
       if (v.error) errors.push('Claim check: ' + v.error);
       verification = normalizeVerification(v.data, items);
+      const serpFails = serps.filter((x) => x.error);
+      tr.end(v.error ? 'failed' : 'ok', v.error || '', analysis.claims.length + ' claims searched' + (serpFails.length ? '; ' + serpFails.length + ' searches failed (' + String(serpFails[0].error).slice(0, 80) + ')' : ''));
     }
   }
 
@@ -214,11 +260,16 @@ export async function runAudit(job, cfg, deps) {
   let gapFailed = false;
   if (!cfg.serpKey) {
     errors.push('Section gaps: SERPAPI_KEY is not set, so top-ranking pages could not be fetched');
+    tr.begin('section_gaps');
+    tr.end('failed', 'SERPAPI_KEY is not set');
   } else if (timeLeft() < 90000) {
     errors.push('Section gaps: skipped to stay inside the 5-minute limit');
+    tr.skip('section_gaps', 'Skipped to stay inside the 5-minute limit');
   } else {
+    tr.begin('section_gaps');
+    let gapError = '';
     const s = await serpSearch(deps, cfg, inp.keyword, inp, 10);
-    if (s.error) errors.push('Section gaps: SerpAPI search failed (' + String(s.error).slice(0, 100) + ')');
+    if (s.error) { errors.push('Section gaps: SerpAPI search failed (' + String(s.error).slice(0, 100) + ')'); gapError = 'SerpAPI search failed (' + String(s.error).slice(0, 100) + ')'; }
     // Many big sites block automated readers, so try all top 10 results and
     // keep the first COMPETITOR_PAGES that can actually be read.
     const picks = s.json ? competitorUrls(s.json, inp.url, 10) : [];
@@ -234,13 +285,15 @@ export async function runAudit(job, cfg, deps) {
         return hostOf(p.url) + ': ' + reason;
       });
       errors.push('Section gaps: none of the top pages could be read (' + why.join('; ').slice(0, 300) + ')');
+      gapError = 'None of the top pages could be read (' + why.join('; ').slice(0, 200) + ')';
     }
     if (competitors.length) {
       await pause();
       const g = await callGroq(deps, cfg, buildGapPrompt(article, competitors, inp.keyword), 1500, timeLeft);
-      if (g.error) { gapFailed = true; errors.push('Section gaps: ' + g.error); }
+      if (g.error) { gapFailed = true; errors.push('Section gaps: ' + g.error); gapError = g.error; }
       else gap = normalizeGap(g.data, competitors.length);
     }
+    tr.end(gapError ? 'failed' : 'ok', gapError, competitors.length + ' of ' + picks.length + ' top pages could be read');
   }
 
   // Readability, with the target grade taken from the top-ranking pages
@@ -253,9 +306,12 @@ export async function runAudit(job, cfg, deps) {
   }
 
   // 5. Plagiarism
+  tr.begin('originality');
   const plagiarism = timeLeft() > 30000
     ? await plagiarismCheck(deps, cfg, article, inp)
     : { checked: false, percent: null, sources: [], error: 'skipped to stay inside the 5-minute limit' };
+  tr.end(plagiarism.checked ? 'ok' : /skipped/.test(plagiarism.error || '') ? 'skipped' : 'failed', plagiarism.checked ? '' : plagiarism.error,
+    plagiarism.checked ? (plagiarism.method === 'phrase' ? 'Exact-sentence Google search' : 'Copyscape') : '');
 
   return buildReport({
     audit_id: job.audit_id,

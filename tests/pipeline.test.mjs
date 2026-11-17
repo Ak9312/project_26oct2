@@ -316,3 +316,98 @@ test('claim searches are capped to save SerpAPI searches', async () => {
   assert.equal(w.calls.filter((c) => c.kind === 'serp' && c.q.startsWith('query ')).length, 5);
   assert.equal(r.parameters.accuracy.claim_counts.total, 5);
 });
+
+// ---- Monitoring: every audit carries a run log (time per step, retries, errors)
+const stepNames = (r) => r.run_log.steps.map((s) => s.name + ':' + s.status);
+
+test('run log: a clean audit times all five steps and counts API calls', async () => {
+  const withUsage = (fn) => (body, n) => {
+    const res = fn(body, n);
+    const text = res.text;
+    return Object.assign({}, res, { text: async () => JSON.stringify(Object.assign(JSON.parse(await text()), { usage: { total_tokens: 1000 } })) });
+  };
+  const w = world({ groq: [withUsage(analysisOk), withUsage(verifyOk), withUsage(gapOk)] });
+  const r = await runAudit(job(), auditConfig(ENV), w.deps);
+  const log = r.run_log;
+  assert.deepEqual(stepNames(r), ['fetch:skipped', 'ai_analysis:ok', 'claim_check:ok', 'section_gaps:ok', 'originality:ok']);
+  assert.equal(log.outcome, 'ok');
+  assert.equal(log.failed_step, '');
+  assert.equal(log.apis.groq.calls, 3);
+  assert.equal(log.apis.copyscape.calls, 1);
+  assert.equal(log.apis.competitor_pages.calls, 3);
+  assert.equal(log.tokens, 3000);
+  assert.equal(log.ai_calls, 3);
+  assert.equal(log.ai_failed, false);
+  assert.equal(log.total_ms, w.elapsed());
+  assert.ok(log.steps.every((s) => s.ms >= 0));
+  // The two 15 s pauses belong to the steps they sit in.
+  assert.ok(log.steps.find((s) => s.name === 'claim_check').ms >= 15000);
+  assert.equal(log.model, 'openai/gpt-oss-120b');
+  assert.equal(log.score, r.total);
+});
+
+test('run log: a bad URL fails at the fetch step and nothing after it runs', async () => {
+  const w = world({ page: () => response(404, 'Not found') });
+  const r = await runAudit(job({ url: 'https://nope.example/missing', heading: '', content: '' }), auditConfig(ENV), w.deps);
+  const log = r.run_log;
+  assert.equal(log.outcome, 'failed');
+  assert.equal(log.failed_step, 'fetch');
+  assert.deepEqual(stepNames(r), ['fetch:failed']);
+  assert.match(log.steps[0].error, /HTTP 404/);
+  assert.equal(log.apis.page.failed, 1);
+  assert.equal(log.score, null);
+  assert.equal(log.url, 'https://nope.example/missing');
+});
+
+test('run log: a Groq JSON retry is recorded as "retry saved it"', async () => {
+  let first = true;
+  const w = world({
+    groq: [
+      () => { if (first) { first = false; return response(400, { error: { message: 'Failed to generate JSON', code: 'json_validate_failed' } }); } },
+      analysisOk, verifyOk, gapOk,
+    ],
+  });
+  const r = await runAudit(job(), auditConfig(ENV), w.deps);
+  const ai = r.run_log.steps.find((s) => s.name === 'ai_analysis');
+  assert.equal(ai.status, 'ok');
+  assert.equal(ai.retries, 1);
+  assert.equal(ai.recovered, true);
+  assert.match(ai.retry_reasons[0], /double tokens/);
+  assert.equal(r.run_log.recovered, true);
+  assert.equal(r.run_log.ai_failed, false);
+});
+
+test('run log: a wrong Groq key marks the AI step as the one that broke', async () => {
+  const w = world({ groq: () => response(401, { error: { message: 'Invalid API Key' } }) });
+  const r = await runAudit(job(), auditConfig(ENV), w.deps);
+  const log = r.run_log;
+  assert.deepEqual(stepNames(r), ['fetch:skipped', 'ai_analysis:failed', 'claim_check:skipped', 'section_gaps:failed', 'originality:ok']);
+  assert.equal(log.outcome, 'failed'); // no AI analysis = the audit counts as failed
+  assert.equal(log.failed_step, 'ai_analysis');
+  assert.match(log.error, /Groq rejected the API key/);
+  assert.equal(log.ai_failed, true);
+  assert.equal(log.retries, 0);
+});
+
+test('run log: a crash inside a step is caught and pinned to that step', async () => {
+  // Network errors are caught inside each step, so make the pause before the
+  // claim check throw instead: that is a real crash.
+  const w = world();
+  w.deps.sleep = async () => { throw new TypeError('cannot read x of undefined'); };
+  const r = await runAudit(job(), auditConfig(ENV), w.deps);
+  assert.equal(r.status, 'error');
+  assert.match(r.error, /Unexpected error while auditing/);
+  assert.equal(r.run_log.outcome, 'failed');
+  assert.equal(r.run_log.failed_step, 'claim_check');
+  assert.equal(r.run_log.crashed, true);
+  assert.match(r.run_log.steps.find((s) => s.name === 'claim_check').error, /Crashed: cannot read x/);
+});
+
+test('run log never contains API keys', async () => {
+  const w = world({ serp: () => { throw new Error('connect failed for https://serpapi.com/search.json?q=x&api_key=serp_test'); } });
+  const r = await runAudit(job(), auditConfig(ENV), w.deps);
+  const text = JSON.stringify(r.run_log);
+  assert.ok(!text.includes('serp_test'));
+  assert.ok(!text.includes('gsk_test'));
+  assert.ok(!text.includes('cs_test'));
+});

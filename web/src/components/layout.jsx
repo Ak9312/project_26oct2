@@ -47,6 +47,7 @@ const NAV = [
   { to: '/', label: 'Audits', end: true },
   { to: '/review', label: 'Review', badge: true },
   { to: '/validation', label: 'Validation' },
+  { to: '/monitoring', label: 'Monitoring' },
 ];
 
 function StatusPill({ h }) {

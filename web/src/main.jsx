@@ -10,6 +10,7 @@ import NewAuditPage from '@/pages/NewAudit';
 import ReportPage from '@/pages/Report';
 import ReviewPage from '@/pages/Review';
 import ValidationPage from '@/pages/Validation';
+import MonitoringPage from '@/pages/Monitoring';
 import NotFound from '@/pages/NotFound';
 
 // Old links (/report.html?id=…) keep working.
@@ -30,6 +31,7 @@ createRoot(document.getElementById('root')).render(
             <Route path="audits/:id" element={<ReportPage />} />
             <Route path="review" element={<ReviewPage />} />
             <Route path="validation" element={<ValidationPage />} />
+            <Route path="monitoring" element={<MonitoringPage />} />
             <Route path="report.html" element={<LegacyReport />} />
             <Route path="review.html" element={<Navigate to="/review" replace />} />
             <Route path="index.html" element={<Navigate to="/" replace />} />

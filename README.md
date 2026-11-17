@@ -104,21 +104,35 @@ Every audit is saved in the app. **Download CSV** (on the home page) exports all
 
 Targets shown in the app: an average total gap within 5 points, and pass/fail agreement on at least 27 of 30. These are goals to test against, not results.
 
+## Monitoring (AIOps backend)
+
+The **Monitoring** page shows where the app breaks once people use it:
+
+- **Run log**: every audit with its time, URL, keyword, total time, time per step (page fetch → AI analysis → claim check → top-10 pages → originality), model, retries, AI tokens and errors. Click a row for a step-by-step timeline; steps after a failure show as "not reached".
+- **API health** for Groq, SerpAPI, page fetch and Copyscape, from recent audits plus a **Check APIs now** button. The check uses free endpoints (Groq's model list, SerpAPI's account page, example.com, Copyscape's balance), so it costs no searches or AI credits.
+- **Failures**: which step broke, the error, and whether a retry saved it.
+- **Numbers** over the latest 50 audits: success rate, average time, slow audits, AI failure rate, retries, average tokens, accuracy against your own Validation scores.
+- **Alerts**: an API down, AI failure rate over 20%, audits over 3 minutes (a normal audit takes 1–3 min), a cost spike (over 2× the usual tokens), and accuracy under 80% (once 5 articles are scored).
+
+Run logs are saved with each report and in `monitor/runs.json` in the Blob store (latest 300; one extra write per audit). Keys are scrubbed from every logged error. The logic is in `src/monitor.js` and the API is `api/monitor.js`.
+
 ## What's in the repo
 
 ```
 web/                    Front end: React + Tailwind CSS + shadcn/ui-style components (Radix), Recharts
-  src/pages/              Audits, New audit, Report, Review queue, Validation
+  src/pages/              Audits, New audit, Report, Review queue, Validation, Monitoring
   src/components/         UI primitives, charts, layout
 api/                    Vercel functions
   audit.js                starts an audit, runs it in the background (up to 5 min)
   data.js                 list, report, review queue, validation
   export.js               CSV download
   health.js               setup status, ?check=storage
+  monitor.js              run logs, numbers, alerts, Check APIs now
   _engine.js              generated from src/ (don't edit)
   _store.js               private Blob storage, sample data in mock mode
 src/                    Scoring and pipeline code
   pipeline.js             the audit, step by step
+  monitor.js              run log tracer, API checks, numbers and alerts
 scripts/                engine and sample-data generators, local server
 tests/                  unit tests + full simulated audits (rate limits, missing keys, blocked sites, time limit)
 ```

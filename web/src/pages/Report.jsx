@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { ArrowLeft, ExternalLink, AlertTriangle, CheckCircle2, XCircle, Check, X, Minus, Printer, Flag, Loader2, Circle, RotateCw, Info } from 'lucide-react';
+import { ArrowLeft, ExternalLink, AlertTriangle, CheckCircle2, XCircle, Check, X, Minus, Printer, Flag, Loader2, Circle, RotateCw, Info, Activity } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button, Card, CardHeader, CardTitle, CardDescription, CardContent, Badge, Tabs, TabsList, TabsTrigger, TabsContent, Input, Label, Table, THead, TBody, TR, TH, TD, Skeleton, Progress } from '@/components/ui';
 import { ErrorNote, useApp } from '@/components/layout';
@@ -59,7 +59,10 @@ function Failed({ rep }) {
         <h1 className="mt-4 text-xl font-semibold tracking-tight">The audit couldn't run</h1>
         <p className="mt-1 text-sm text-muted-foreground">{fmtDate(rep.created_at)} · <span className="font-mono">{rep.audit_id}</span></p>
         <div className="mt-5 rounded-lg border border-bad/30 bg-bad-soft px-4 py-3 text-sm text-bad-ink">{rep.error}</div>
-        <Button asChild className="mt-6"><Link to="/new"><RotateCw />Try again</Link></Button>
+        <div className="mt-6 flex flex-wrap gap-2">
+          <Button asChild><Link to="/new"><RotateCw />Try again</Link></Button>
+          {rep.run_log ? <Button variant="outline" asChild><Link to={'/monitoring?run=' + encodeURIComponent(rep.audit_id)}><Activity />See which step broke</Link></Button> : null}
+        </div>
       </CardContent>
     </Card>
   );
@@ -381,6 +384,7 @@ export default function ReportPage() {
         </div>
         <div className="no-print flex shrink-0 gap-2">
           <Button variant="outline" onClick={() => window.print()}><Printer />Print / PDF</Button>
+          {rep.run_log ? <Button variant="outline" asChild><Link to={'/monitoring?run=' + encodeURIComponent(rep.audit_id)}><Activity />Run log</Link></Button> : null}
           {needs ? <Button asChild><Link to="/review"><Flag />Review queue</Link></Button> : null}
         </div>
       </div>

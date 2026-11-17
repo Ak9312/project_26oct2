@@ -5,11 +5,14 @@
 // - MOCK_MODE=1: an in-memory store seeded with sample audits.
 // Free Hobby plans include 2,000 Blob writes a month, so an audit costs two
 // writes (its report and one index update) and reviews/validation one each.
+// Monitoring adds one write per audit (its run log in monitor/runs.json) and
+// one per "Check APIs now".
 import { get, put, head, list, del, BlobPreconditionFailedError } from '@vercel/blob';
 import { RECORDS, INDEX } from './_mock-data.js';
-import { upsertEntry, summarize } from './_engine.js';
+import { upsertEntry, summarize, emptyMonitor, addRun, sampleRunLog } from './_engine.js';
 
 const INDEX_PATH = 'index.json';
+const MONITOR_PATH = 'monitor/runs.json';
 const recordPath = (id) => 'audits/' + id + '.json';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -53,6 +56,7 @@ async function headEtag(path) {
 }
 
 const asIndex = (r) => (r && Array.isArray(r.data.audits) ? r.data : { audits: [] });
+const asMonitor = (r) => (r && r.data && Array.isArray(r.data.runs) ? r.data : emptyMonitor());
 const isConflict = (e) => e instanceof BlobPreconditionFailedError || /already exists|precondition/i.test(String(e && e.message));
 
 // Reports whose index entry is missing (an index update that failed) are
@@ -122,34 +126,61 @@ const blobStore = {
   // The last attempt writes without the ETag check, so a change is never
   // lost to repeated conflicts (it re-reads and merges into the latest index).
   async updateIndex(fn) {
-    const ATTEMPTS = 5;
-    for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
-      const last = attempt === ATTEMPTS - 1;
-      const etag = last ? null : await headEtag(INDEX_PATH);
-      const cur = await readJson(INDEX_PATH);
-      const out = fn(asIndex(cur));
-      if (!out.index) return out;
-      let opts = {};
-      if (!last) opts = etag ? { ifMatch: etag } : cur ? {} : { allowOverwrite: false };
-      try {
-        await writeJson(INDEX_PATH, out.index, opts);
-        return out;
-      } catch (e) {
-        if (!isConflict(e) || last) throw e;
-        console.warn('Index update conflict, retrying', attempt + 1);
-        await sleep(150 + Math.random() * 350 * (attempt + 1));
-      }
-    }
-    throw new Error('The audit list is busy. Try again in a moment.');
+    return updateDoc(INDEX_PATH, asIndex, 'index', fn);
+  },
+  async getMonitor() {
+    return asMonitor(await readJson(MONITOR_PATH));
+  },
+  // fn(doc) returns { monitor } to save.
+  async updateMonitor(fn) {
+    return updateDoc(MONITOR_PATH, asMonitor, 'monitor', fn);
   },
 };
+
+async function updateDoc(path, shape, key, fn) {
+  const ATTEMPTS = 5;
+  for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
+    const last = attempt === ATTEMPTS - 1;
+    const etag = last ? null : await headEtag(path);
+    const cur = await readJson(path);
+    const out = fn(shape(cur));
+    if (!out[key]) return out;
+    let opts = {};
+    if (!last) opts = etag ? { ifMatch: etag } : cur ? {} : { allowOverwrite: false };
+    try {
+      await writeJson(path, out[key], opts);
+      return out;
+    } catch (e) {
+      if (!isConflict(e) || last) throw e;
+      console.warn('Update conflict on ' + path + ', retrying', attempt + 1);
+      await sleep(150 + Math.random() * 350 * (attempt + 1));
+    }
+  }
+  throw new Error('The audit list is busy. Try again in a moment.');
+}
 
 // ---- MOCK_MODE: sample data in memory, reset when the function restarts.
 const mem = globalThis.__cqaMem || (globalThis.__cqaMem = {
   records: JSON.parse(JSON.stringify(RECORDS)),
   index: JSON.parse(JSON.stringify(INDEX)),
   pending: new Map(),
+  monitor: null,
 });
+
+// Sample run logs: one clean audit, one saved by a retry, one failed fetch.
+async function memMonitor() {
+  if (!mem.monitor) {
+    const reps = Object.values(RECORDS).map((r) => r.report);
+    const variants = { aud_sample_compost: 'retry', aud_sample_desk: 'ok', aud_sample_failed: 'failed' };
+    let doc = emptyMonitor();
+    const runs = [];
+    for (const r of reps) runs.push(await sampleRunLog(r, variants[r.audit_id] || 'ok'));
+    runs.sort((a, b) => String(a.at).localeCompare(String(b.at)));
+    for (const run of runs) doc = addRun(doc, run);
+    mem.monitor = doc;
+  }
+  return mem.monitor;
+}
 
 function materialize() {
   for (const [id, p] of mem.pending) {
@@ -157,6 +188,7 @@ function materialize() {
     mem.pending.delete(id);
     mem.records[id] = p.record;
     mem.index = upsertEntry(mem.index, summarize(p.record.report));
+    if (p.record.report.run_log && mem.monitor) mem.monitor = addRun(mem.monitor, p.record.report.run_log);
   }
 }
 
@@ -173,6 +205,13 @@ const memoryStore = {
     if (out.index) mem.index = out.index;
     return out;
   },
+  async getMonitor() { await memMonitor(); materialize(); return JSON.parse(JSON.stringify(mem.monitor)); },
+  async updateMonitor(fn) {
+    await memMonitor();
+    const out = fn(JSON.parse(JSON.stringify(mem.monitor)));
+    if (out.monitor) mem.monitor = out.monitor;
+    return out;
+  },
   // Sample audit: copies the first sample report and "finishes" after 6 s.
   async mockAudit(job) {
     const sample = JSON.parse(JSON.stringify(Object.values(RECORDS)[0].report));
@@ -181,6 +220,8 @@ const memoryStore = {
     sample.article.title = job.input.heading || job.input.url || sample.article.title;
     sample.article.url = job.input.url || '';
     sample.input.keyword = job.input.keyword || sample.input.keyword;
+    sample.run_log = await sampleRunLog(sample, 'ok');
+    sample.run_log.total_ms = 6000;
     mem.pending.set(job.audit_id, { ready_at: Date.now() + 6000, record: { audit_id: job.audit_id, report: sample } });
   },
 };

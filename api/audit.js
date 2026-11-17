@@ -4,7 +4,7 @@
 import { waitUntil } from '@vercel/functions';
 import { send, requireAuth, readBody, NO_STORAGE } from './_lib.js';
 import { getStore } from './_store.js';
-import { normalizeInput, makeAuditId, runAudit, auditConfig, buildErrorReport, summarize, upsertEntry } from './_engine.js';
+import { normalizeInput, makeAuditId, runAudit, auditConfig, buildErrorReport, summarize, upsertEntry, crashRunLog, addRun } from './_engine.js';
 
 const FIELDS = ['url', 'heading', 'content', 'meta_description', 'keyword', 'secondary', 'target_grade', 'market'];
 
@@ -26,12 +26,20 @@ async function runAndSave(job, store) {
       error: 'Unexpected error while auditing: ' + String((e && e.message) || e).slice(0, 200),
       config: { pass_mark: cfg.passMark, model: cfg.model },
     });
+    report.run_log = crashRunLog(job, e, cfg.model);
   }
   try {
     await store.putRecord({ audit_id: job.audit_id, report });
     await store.updateIndex((idx) => ({ index: upsertEntry(idx, summarize(report)) }));
   } catch (e) {
     console.error('Saving the audit failed', job.audit_id, e);
+  }
+  // The run log for the Monitoring page. Saved separately so a failure here
+  // never loses the audit itself.
+  try {
+    if (report.run_log) await store.updateMonitor((doc) => ({ monitor: addRun(doc, report.run_log) }));
+  } catch (e) {
+    console.error('Saving the run log failed', job.audit_id, e);
   }
 }
 
