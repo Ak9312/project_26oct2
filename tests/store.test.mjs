@@ -4,11 +4,13 @@ import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
 
 class BlobPreconditionFailedError extends Error {}
+class BlobNotFoundError extends Error {}
 const files = new Map(); // path -> { body, etag }
 let n = 0;
 const fake = {
   BlobPreconditionFailedError,
-  async head(path) { const f = files.get(path); if (!f) { const e = new Error('not found'); e.name = 'BlobNotFoundError'; throw e; } return { pathname: path, etag: f.etag }; },
+  BlobNotFoundError,
+  async head(path) { const f = files.get(path); if (!f) { throw new Error('Vercel Blob: The requested blob does not exist'); } return { pathname: path, etag: f.etag }; },
   // get() reports a differently formatted ETag, like a CDN header would.
   async get(path) { const f = files.get(path); if (!f) return null; return { statusCode: 200, stream: new Blob([f.body]).stream(), blob: { etag: 'W/' + f.etag } }; },
   async put(path, body, opts) {
@@ -60,4 +62,16 @@ test('clearing history deletes reports so the list sync cannot bring them back',
   // 'failed' picks every error report (these test reports are all errors).
   assert.equal(idsToDelete(idx, 'failed').length, 2);
   assert.equal(idsToDelete(idx, 'all').length, 2);
+});
+
+test('monitor log: the first save creates monitor/runs.json (live "does not exist" error)', async () => {
+  const { addRun, withApiCheck } = await import('../api/_engine.js');
+  const store = getStore();
+  files.delete('monitor/runs.json');
+  assert.deepEqual((await store.getMonitor()).runs, []);
+  await store.updateMonitor((d) => ({ monitor: addRun(d, { audit_id: 'aud_mon_000001', at: '2026-11-17T04:05:00Z', outcome: 'failed' }) }));
+  await store.updateMonitor((d) => ({ monitor: withApiCheck(d, { at: 'x', ok: true, results: {} }) }));
+  const doc = await store.getMonitor();
+  assert.equal(doc.runs.length, 1);
+  assert.equal(doc.api_check.ok, true);
 });

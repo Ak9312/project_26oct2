@@ -7,7 +7,7 @@
 // writes (its report and one index update) and reviews/validation one each.
 // Monitoring adds one write per audit (its run log in monitor/runs.json) and
 // one per "Check APIs now".
-import { get, put, head, list, del, BlobPreconditionFailedError } from '@vercel/blob';
+import { get, put, head, list, del, BlobPreconditionFailedError, BlobNotFoundError } from '@vercel/blob';
 import { RECORDS, INDEX } from './_mock-data.js';
 import { upsertEntry, summarize, emptyMonitor, addRun, sampleRunLog } from './_engine.js';
 
@@ -15,6 +15,10 @@ const INDEX_PATH = 'index.json';
 const MONITOR_PATH = 'monitor/runs.json';
 const recordPath = (id) => 'audits/' + id + '.json';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// A file that doesn't exist yet. Live, Vercel Blob says "The requested blob
+// does not exist", so match that wording as well as the error class.
+const isNotFound = (e) => Boolean(e) && ((BlobNotFoundError && e instanceof BlobNotFoundError) ||
+  /not ?found|does not exist/i.test(String(e.name) + ' ' + String(e.message)));
 
 export function storageConfigured() {
   return Boolean(process.env.BLOB_READ_WRITE_TOKEN || process.env.BLOB_STORE_ID);
@@ -25,7 +29,7 @@ async function readJson(path) {
   try {
     r = await get(path, { access: 'private', useCache: false });
   } catch (e) {
-    if (e && /not ?found/i.test(String(e.name) + ' ' + String(e.message))) return null;
+    if (isNotFound(e)) return null;
     throw e;
   }
   if (!r || r.statusCode !== 200 || !r.stream) return null;
@@ -50,7 +54,7 @@ async function headEtag(path) {
     const m = await head(path);
     return m && m.etag ? m.etag : null;
   } catch (e) {
-    if (e && /not ?found/i.test(String(e.name) + ' ' + String(e.message))) return null;
+    if (isNotFound(e)) return null;
     throw e;
   }
 }
