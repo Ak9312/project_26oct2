@@ -14,6 +14,8 @@ export const THRESHOLDS = {
   accuracy: 0.8,            // slide 134: accuracy under 80%
   accuracy_min_scored: 5,   // need at least 5 articles you scored yourself
   cost_spike: 2,            // an audit using over 2× the usual AI tokens
+  thumbs_down_rate: 0.2,    // alert when over 20% of rated audits got a 👎
+  thumbs_min_rated: 3,      // …once at least 3 audits are rated
 };
 
 export const STEPS = [
@@ -33,12 +35,14 @@ export const APIS = [
 const stepLabel = (name) => (STEPS.find((s) => s.name === name) || { label: name }).label;
 
 // Never let a key reach the logs, even inside an error message.
-export function redact(s) {
+function scrubKeys(s) {
   return String(s == null ? '' : s)
     .replace(/((?:api_key|key|k|u|token|password)=)[^&\s"']+/gi, '$1•••')
     .replace(/Bearer\s+[^\s"']+/gi, 'Bearer •••')
-    .replace(/\b(gsk|sk-or|sk)[-_][A-Za-z0-9_-]{6,}/g, '$1_•••')
-    .slice(0, 300);
+    .replace(/\b(gsk|sk-or|sk)[-_][A-Za-z0-9_-]{6,}/g, '$1_•••');
+}
+export function redact(s) {
+  return scrubKeys(s).slice(0, 300);
 }
 
 // Which API a URL belongs to. Pages read during the top-10 step are
@@ -183,7 +187,14 @@ export function accuracyFromIndex(index, passMark) {
   return { scored: pairs.length, agree, rate: monPct(agree, pairs.length) };
 }
 
-export function monitorSummary(runs, accuracy) {
+// 👍 / 👎 counts from the audit index.
+export function feedbackFromIndex(index) {
+  const rated = ((index && index.audits) || []).filter((e) => e.feedback && (e.feedback.vote === 'up' || e.feedback.vote === 'down'));
+  const down = rated.filter((e) => e.feedback.vote === 'down').length;
+  return { rated: rated.length, up: rated.length - down, down, down_rate: monPct(down, rated.length) };
+}
+
+export function monitorSummary(runs, accuracy, feedback) {
   const w = runs.slice(0, WINDOW);
   const done = w.filter((r) => r.outcome !== 'failed');
   const aiRuns = w.filter((r) => r.ai_calls > 0);
@@ -203,6 +214,7 @@ export function monitorSummary(runs, accuracy) {
     recovered: w.filter((r) => r.recovered).length,
     avg_tokens: withTokens.length ? Math.round(withTokens.reduce((n, r) => n + r.tokens, 0) / withTokens.length) : null,
     accuracy: accuracy || { scored: 0, agree: 0, rate: null },
+    feedback: feedback || { rated: 0, up: 0, down: 0, down_rate: null },
   };
 }
 
@@ -263,6 +275,10 @@ export function monitorAlerts(summary, health, runs) {
   if (acc && acc.scored >= T.accuracy_min_scored && acc.rate < T.accuracy) {
     alerts.push({ level: 'warn', key: 'accuracy', title: 'Accuracy ' + Math.round(acc.rate * 100) + '%', detail: 'The auditor agreed with your pass/fail on ' + acc.agree + ' of ' + acc.scored + ' articles you scored (limit 80%).' });
   }
+  const fb = summary.feedback;
+  if (fb && fb.rated >= T.thumbs_min_rated && fb.down_rate > T.thumbs_down_rate) {
+    alerts.push({ level: 'warn', key: 'thumbs', title: Math.round(fb.down_rate * 100) + '% thumbs down', detail: fb.down + ' of ' + fb.rated + ' rated audits got a 👎 (limit 20%). They are in the Review queue.' });
+  }
   return alerts;
 }
 
@@ -286,7 +302,7 @@ function failureList(runs) {
 
 export function monitorResponse(doc, index, passMark) {
   const runs = (doc && Array.isArray(doc.runs) ? doc.runs : []);
-  const summary = monitorSummary(runs, accuracyFromIndex(index, passMark));
+  const summary = monitorSummary(runs, accuracyFromIndex(index, passMark), feedbackFromIndex(index));
   const health = apiHealth(runs, doc && doc.api_check);
   return {
     summary,
@@ -409,4 +425,61 @@ export function sampleRunLog(report, variant) {
     }
     return tr.finish(report, { input: report.input ? { url: report.article && report.article.url, keyword: report.input.keyword } : {} }, { model: report.model });
   })();
+}
+
+// ---- "Download flagged entries": one text file of everything that needs a
+// look, ready to paste into a Claude chat (Spandan's tip: analyse flags in
+// your subscription chat instead of paying for API calls).
+const oneLine = (s) => String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
+const when = (iso) => oneLine(iso).slice(0, 16).replace('T', ' ');
+
+export function flaggedExport(doc, index, passMark, now) {
+  const runs = (doc && Array.isArray(doc.runs) ? doc.runs : []);
+  const audits = (index && index.audits) || [];
+  const failed = runs.filter((r) => r.outcome !== 'ok' || r.slow || r.retries > 0).slice(0, 100);
+  const down = audits.filter((e) => e.feedback && e.feedback.vote === 'down');
+  const review = audits.filter((e) => (e.status === 'needs_review' || e.status === 'error') && !(e.review && e.review.decision !== 'pending'));
+  const acc = accuracyFromIndex(index, passMark);
+  const mismatched = audits.filter((e) => e.validation && e.total != null && e.validation.my_total != null && (e.total >= passMark) !== (Number(e.validation.my_total) >= passMark));
+  const date = new Date(now).toISOString();
+  const L = [];
+  L.push('# Flagged entries: Content Quality Auditor');
+  L.push('Exported ' + date.slice(0, 16).replace('T', ' ') + ' UTC. Pass mark ' + passMark + '/100.');
+  L.push('');
+  L.push('I built an AI app that audits SEO articles (pipeline: fetch page → Groq AI analysis → claim check with Google results → compare with the top-10 Google pages → originality check). Below are the entries my monitoring flagged. Please find the patterns: which step fails most and why, what users disliked, and what I should fix first. Keep the answer short and practical.');
+  L.push('');
+  L.push('## 1. Audits that failed, were slow, or needed retries (' + failed.length + ')');
+  if (!failed.length) L.push('None.');
+  for (const r of failed) {
+    const bad = (r.steps || []).filter((s) => s.status === 'failed' || s.retries);
+    L.push('- ' + when(r.at) + ' | ' + oneLine(r.title || r.url || r.audit_id).slice(0, 90) + ' | keyword: ' + oneLine(r.keyword) +
+      ' | result: ' + r.outcome + (r.slow ? ', slow' : '') + ' | total ' + Math.round((r.total_ms || 0) / 1000) + ' s' +
+      (bad.length ? ' | ' + bad.map((s) => s.label + ': ' + [s.status === 'failed' ? 'FAILED ' + oneLine(s.error || '') : '',
+        s.retries ? s.retries + (s.retries === 1 ? ' retry' : ' retries') + (s.recovered ? ', saved by the retry' : '') + ' (' + oneLine(s.retry_reasons.join('; ')) + ')' : ''].filter(Boolean).join('; ')).join(' ; ') : ''));
+  }
+  L.push('');
+  L.push('## 2. Audits users marked 👎 (' + down.length + ')');
+  if (!down.length) L.push('None.');
+  for (const e of down) {
+    L.push('- ' + when(e.created_at) + ' | ' + oneLine(e.title || e.url).slice(0, 90) + ' | keyword: ' + oneLine(e.keyword) + ' | score ' + (e.total == null ? '—' : e.total) +
+      ' (accuracy ' + e.accuracy + '/30, readability ' + e.readability + '/20, keywords ' + e.keywords + '/20, sections ' + e.sections + '/20, originality ' + e.plagiarism + '/10)' +
+      ' | user note: ' + (oneLine(e.feedback.note) || '(none)'));
+  }
+  L.push('');
+  L.push('## 3. Audits waiting in the review queue (' + review.length + ')');
+  if (!review.length) L.push('None.');
+  for (const e of review.slice(0, 100)) {
+    L.push('- ' + when(e.created_at) + ' | ' + oneLine(e.title || e.url).slice(0, 90) + ' | score ' + (e.total == null ? '—' : e.total) + ' | status ' + e.status + ' | why: ' + oneLine((e.review_reasons || []).join('; ')).slice(0, 300));
+  }
+  L.push('');
+  L.push('## 4. Where the auditor disagreed with my own pass/fail (' + mismatched.length + (acc.scored ? ' of ' + acc.scored + ' I scored' : '') + ')');
+  if (!mismatched.length) L.push('None.');
+  for (const e of mismatched) {
+    L.push('- ' + oneLine(e.title || e.url).slice(0, 90) + ' | auditor ' + e.total + ' vs mine ' + e.validation.my_total);
+  }
+  return {
+    filename: 'flagged-entries-' + date.slice(0, 10) + '.md',
+    text: scrubKeys(L.join('\n')),
+    counts: { failed: failed.length, thumbs_down: down.length, review: review.length, mismatched: mismatched.length },
+  };
 }

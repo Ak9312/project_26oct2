@@ -2,9 +2,11 @@
 //   { action: 'get' }        → run logs, numbers, API health, failures, alerts
 //   { action: 'check_apis' } → pings Groq, SerpAPI, a test page and Copyscape
 //                              on free endpoints, saves and returns the result
+//   { action: 'flagged' }    → one text file of failed, slow, 👎 and review-queue
+//                              audits, to paste into a Claude chat
 import { send, requireAuth, readBody, MOCK, NO_STORAGE } from './_lib.js';
 import { getStore } from './_store.js';
-import { auditConfig, monitorResponse, checkApis, withApiCheck } from './_engine.js';
+import { auditConfig, monitorResponse, checkApis, withApiCheck, flaggedExport } from './_engine.js';
 
 function mockCheck() {
   const ok = (detail, ms) => ({ status: 'ok', ms, error: '', detail });
@@ -32,6 +34,10 @@ export default async function handler(req, res) {
     if (body.action === 'get') {
       const [doc, index] = await Promise.all([store.getMonitor(), store.getIndex()]);
       return send(res, 200, monitorResponse(doc, index, cfg.passMark));
+    }
+    if (body.action === 'flagged') {
+      const [doc, index] = await Promise.all([store.getMonitor(), store.getIndex()]);
+      return send(res, 200, flaggedExport(doc, index, cfg.passMark, Date.now()));
     }
     if (body.action === 'check_apis') {
       const check = MOCK ? mockCheck() : await checkApis(cfg, { fetch: globalThis.fetch, now: () => Date.now() });

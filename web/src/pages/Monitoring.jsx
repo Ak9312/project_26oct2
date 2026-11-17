@@ -3,7 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import {
   RefreshCw, Activity, Timer, Turtle, Bot, CircleCheck, AlertTriangle, XCircle, PlugZap, ChevronRight, ChevronDown,
-  RotateCcw, Coins, Target, CircleDashed, CircleMinus,
+  RotateCcw, Coins, Target, CircleDashed, CircleMinus, Download, ThumbsUp,
 } from 'lucide-react';
 import { Button, Card, CardHeader, CardTitle, CardDescription, CardContent, Table, THead, TBody, TR, TH, TD, Skeleton, Badge, Alert } from '@/components/ui';
 import { PageHeader, ErrorNote } from '@/components/layout';
@@ -240,6 +240,27 @@ export default function MonitoringPage() {
       setChecking(false);
     }
   };
+  const [exporting, setExporting] = useState(false);
+  const downloadFlagged = async () => {
+    setExporting(true);
+    try {
+      const f = await monitor('flagged');
+      const url = URL.createObjectURL(new Blob([f.text], { type: 'text/markdown;charset=utf-8' }));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = f.filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      const c = f.counts;
+      toast.success(`Downloaded: ${c.failed} failed or slow, ${c.thumbs_down} 👎, ${c.review} in review. Paste it into a Claude chat.`);
+    } catch (e) {
+      toast.error(e.message);
+    } finally {
+      setExporting(false);
+    }
+  };
   const openRun = (id) => {
     setOpen(id);
     setTimeout(() => scrollTo(id), 50);
@@ -252,7 +273,10 @@ export default function MonitoringPage() {
       <PageHeader
         title="Monitoring"
         description="The backend view: a log of every audit, time per step, API health and alerts, so you can see exactly where it breaks."
-        actions={<Button variant="outline" onClick={load}><RefreshCw />Refresh</Button>}
+        actions={<div className="flex flex-wrap gap-2">
+          <Button variant="outline" onClick={downloadFlagged} disabled={exporting} title="One file of failed, slow, 👎 and review-queue audits, ready to paste into a Claude chat"><Download />{exporting ? 'Preparing…' : 'Download flagged entries'}</Button>
+          <Button variant="outline" onClick={load}><RefreshCw />Refresh</Button>
+        </div>}
       />
       <ErrorNote error={error} />
       {!res ? <Skeleton className="h-96 rounded-xl" /> : (
@@ -268,12 +292,13 @@ export default function MonitoringPage() {
               sub={s.ai_runs ? `${s.ai_failed} of ${s.ai_runs} audits · alert over ${Math.round(T.ai_failure_rate * 100)}%` : 'Alert over 20%'}
               tone={s.ai_failure_rate === null ? undefined : s.ai_failure_rate > T.ai_failure_rate ? 'bad' : 'good'} />
           </div>
-          <div className="mt-3 grid grid-cols-1 gap-3 text-sm sm:grid-cols-3 sm:gap-4">
+          <div className="mt-3 grid grid-cols-1 gap-3 text-sm sm:grid-cols-2 sm:gap-4 lg:grid-cols-4">
             <div className="flex items-center gap-3 rounded-xl border bg-card px-4 py-3"><RotateCcw className="size-4 text-muted-foreground" aria-hidden="true" /><span><span className="font-mono font-semibold tabular">{s.retries}</span> retr{s.retries === 1 ? 'y' : 'ies'} · <span className="font-mono font-semibold tabular">{s.recovered}</span> audit{s.recovered === 1 ? '' : 's'} saved by a retry</span></div>
             <div className="flex items-center gap-3 rounded-xl border bg-card px-4 py-3"><Coins className="size-4 text-muted-foreground" aria-hidden="true" /><span>Average <span className="font-mono font-semibold tabular">{s.avg_tokens ? s.avg_tokens.toLocaleString('en-IN') : '—'}</span> AI tokens per audit (cost; alert at 2× usual)</span></div>
             <div className="flex items-center gap-3 rounded-xl border bg-card px-4 py-3"><Target className="size-4 text-muted-foreground" aria-hidden="true" /><span>Accuracy vs your scores: <span className="font-mono font-semibold tabular">{s.accuracy.scored >= T.accuracy_min_scored ? pct(s.accuracy.rate) : '—'}</span> {s.accuracy.scored >= T.accuracy_min_scored ? `(${s.accuracy.agree}/${s.accuracy.scored}, alert under 80%)` : `(needs ${T.accuracy_min_scored} scored on Validation; ${s.accuracy.scored} so far)`}</span></div>
+            <div className="flex items-center gap-3 rounded-xl border bg-card px-4 py-3"><ThumbsUp className="size-4 text-muted-foreground" aria-hidden="true" /><span>User rating: <span className="font-mono font-semibold tabular">{s.feedback.up}</span> 👍 · <span className="font-mono font-semibold tabular">{s.feedback.down}</span> 👎 {s.feedback.rated ? `(${pct(s.feedback.down_rate)} 👎, alert over 20%)` : '(rate audits on their report page)'}</span></div>
           </div>
-          <p className="mt-2 text-xs text-muted-foreground">Numbers cover the latest {res.window} audits.</p>
+          <p className="mt-2 text-xs text-muted-foreground">Run numbers cover the latest {res.window} audits; ratings and accuracy cover all audits.</p>
 
           <div className="mt-6 space-y-4">
             <ApiHealth health={res.health} onCheck={checkNow} checking={checking} />

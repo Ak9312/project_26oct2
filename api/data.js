@@ -1,10 +1,10 @@
 // POST /api/data — reads and saves app data: audit list, one report, review
-// queue and validation scores.
+// queue, validation scores and 👍/👎 feedback.
 import { send, requireAuth, readBody, validAuditId, NO_STORAGE } from './_lib.js';
 import { getStore } from './_store.js';
 import {
   auditConfig, listResponse, getResponse, reviewListResponse, applyReview, applyValidation,
-  replaceEntry, validationResponse, idsToDelete, withoutEntries,
+  replaceEntry, validationResponse, idsToDelete, withoutEntries, applyFeedback,
 } from './_engine.js';
 
 export default async function handler(req, res) {
@@ -14,7 +14,7 @@ export default async function handler(req, res) {
   const store = getStore();
   if (!store) return send(res, 500, { error: NO_STORAGE });
   const passMark = auditConfig(process.env).passMark;
-  const needsId = ['get', 'review_save', 'validation_save'].indexOf(body.action) >= 0;
+  const needsId = ['get', 'review_save', 'validation_save', 'feedback_save'].indexOf(body.action) >= 0;
   if (needsId && !validAuditId(body.audit_id)) return send(res, 400, { error: 'Missing or invalid audit ID' });
 
   try {
@@ -44,6 +44,13 @@ export default async function handler(req, res) {
           return r.entry ? { index: replaceEntry(idx, r.entry), my_total: r.my_total } : r;
         });
         return out.index ? send(res, 200, { saved: true, my_total: out.my_total }) : send(res, out.status, out.response);
+      }
+      case 'feedback_save': {
+        const out = await store.updateIndex((idx) => {
+          const r = applyFeedback(idx, body);
+          return r.entry ? { index: replaceEntry(idx, r.entry), feedback: r.feedback } : r;
+        });
+        return out.index ? send(res, 200, { saved: true, feedback: out.feedback }) : send(res, out.status, out.response);
       }
       case 'delete': {
         // Clear history: scope 'all', 'failed', or 'ids' with audit_ids.

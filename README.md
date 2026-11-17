@@ -112,6 +112,8 @@ The **Monitoring** page shows where the app breaks once people use it:
 - **API health** for Groq, SerpAPI, page fetch and Copyscape, from recent audits plus a **Check APIs now** button. The check uses free endpoints (Groq's model list, SerpAPI's account page, example.com, Copyscape's balance), so it costs no searches or AI credits.
 - **Failures**: which step broke, the error, and whether a retry saved it.
 - **Numbers** over the latest 50 audits: success rate, average time, slow audits, AI failure rate, retries, average tokens, accuracy against your own Validation scores.
+- **User feedback**: every report has "Was this audit right? 👍 / 👎". A 👎 (with an optional note) sends the audit to the Review queue; Monitoring shows the counts and alerts when over 20% of rated audits get a 👎.
+- **Download flagged entries**: one Markdown file of failed, slow or retried audits, 👎 audits, the review queue and disagreements with your own scores, ready to paste into a Claude chat to find patterns. Keys are scrubbed.
 - **Alerts**: an API down, AI failure rate over 20%, audits over 3 minutes (a normal audit takes 1–3 min), a cost spike (over 2× the usual tokens), and accuracy under 80% (once 5 articles are scored).
 
 Run logs are saved with each report and in `monitor/runs.json` in the Blob store (latest 300; one extra write per audit). Keys are scrubbed from every logged error. The logic is in `src/monitor.js` and the API is `api/monitor.js`.

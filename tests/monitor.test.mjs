@@ -167,3 +167,74 @@ test('redact hides keys in URLs, headers and key-shaped strings', () => {
   const s = redact('GET https://serpapi.com/search.json?q=a&api_key=abc123 Bearer gsk_abcdefghijkl and sk-or-v1-zzzzzzzzzz &k=secret');
   for (const bad of ['abc123', 'gsk_abcdefghijkl', 'sk-or-v1-zzzzzzzzzz', 'secret']) assert.ok(!s.includes(bad), bad);
 });
+
+// ---- 👍 / 👎 feedback and "Download flagged entries"
+import { applyFeedback, flaggedExport, upsertEntry, summarize, buildErrorReport, reviewListResponse, listResponse, getResponse, replaceEntry } from '../api/_engine.js';
+
+const entry = (id, over) => Object.assign({ audit_id: id, created_at: '2026-11-17T10:00:00Z', status: 'passed', title: 'T ' + id, url: '', keyword: 'k', total: 80, accuracy: 25, readability: 15, keywords: 15, sections: 15, plagiarism: 10, review_reasons: [], review: null, validation: null, feedback: null }, over || {});
+
+test('feedback: 👍, 👎 with a note, and clearing it', () => {
+  let idx = { audits: [entry('aud_a'), entry('aud_b')] };
+  const up = applyFeedback(idx, { audit_id: 'aud_a', vote: 'up', note: 'ignored' });
+  assert.equal(up.feedback.vote, 'up');
+  assert.equal(up.feedback.note, '');
+  const down = applyFeedback(idx, { audit_id: 'aud_b', vote: 'down', note: '  score too low  ' + 'x'.repeat(600) });
+  assert.equal(down.feedback.vote, 'down');
+  assert.ok(down.feedback.note.startsWith('score too low'));
+  assert.equal(down.feedback.note.length, 500);
+  idx = replaceEntry(idx, down.entry);
+  assert.equal(applyFeedback(idx, { audit_id: 'aud_b', vote: '' }).feedback, null);
+  assert.equal(applyFeedback(idx, { audit_id: 'aud_b', vote: 'meh' }).status, 400);
+  assert.equal(applyFeedback(idx, { audit_id: 'aud_zzz', vote: 'up' }).status, 404);
+});
+
+test('a 👎 sends a passed audit to the review queue, with the note as the reason', () => {
+  let idx = { audits: [entry('aud_a'), entry('aud_b')] };
+  idx = replaceEntry(idx, applyFeedback(idx, { audit_id: 'aud_b', vote: 'down', note: 'missed a section' }).entry);
+  const q = reviewListResponse(idx).items;
+  assert.deepEqual(q.map((i) => i.audit_id), ['aud_b']);
+  assert.match(q[0].review_reasons.join(' '), /👎: missed a section/);
+  assert.equal(listResponse(idx, 70).pending_reviews, 1);
+  // the list doesn't leak feedback; the report response carries it
+  assert.equal(listResponse(idx, 70).audits[0].feedback, undefined);
+  const rec = { report: buildErrorReport({ audit_id: 'aud_b', created_at: 'x', input: { url: 'u', keyword: 'k' }, error: 'e' }) };
+  assert.equal(getResponse(idx, rec, 'aud_b', 70).feedback.note, 'missed a section');
+});
+
+test('feedback survives the audit being saved again', () => {
+  let idx = { audits: [entry('aud_a', { feedback: { vote: 'down', note: 'n', at: 'x' } })] };
+  const rep = buildErrorReport({ audit_id: 'aud_a', created_at: '2026-11-17T10:00:00Z', input: { url: 'u', keyword: 'k' }, error: 'e' });
+  idx = upsertEntry(idx, summarize(rep));
+  assert.equal(idx.audits[0].feedback.vote, 'down');
+});
+
+test('Monitoring counts 👍/👎 and alerts when over 20% are 👎', () => {
+  const fb = (v) => ({ vote: v, note: '', at: 'x' });
+  const idx = { audits: [entry('a1', { feedback: fb('up') }), entry('a2', { feedback: fb('down') }), entry('a3', { feedback: fb('up') }), entry('a4')] };
+  const m = monitorResponse(docOf([run()]), idx, 70);
+  assert.deepEqual([m.summary.feedback.rated, m.summary.feedback.up, m.summary.feedback.down], [3, 2, 1]);
+  assert.ok(m.alerts.find((a) => a.key === 'thumbs')); // 33% > 20%
+  const few = monitorResponse(docOf([run()]), { audits: idx.audits.slice(0, 2) }, 70);
+  assert.ok(!few.alerts.find((a) => a.key === 'thumbs')); // fewer than 3 rated
+});
+
+test('Download flagged entries: failed runs, 👎 audits, review queue and disagreements, without keys', () => {
+  const doc = docOf([
+    run({ outcome: 'failed', failed_step: 'fetch', error: 'HTTP 404', steps: [{ name: 'fetch', label: 'Fetch article page', status: 'failed', error: 'HTTP 404', retries: 0, retry_reasons: [] }] }),
+    run({ steps: [{ name: 'ai_analysis', label: 'AI analysis (Groq)', status: 'ok', error: '', retries: 1, recovered: true, retry_reasons: ['Bad JSON'] }], retries: 1, recovered: true }),
+    run(),
+  ]);
+  const idx = { audits: [
+    entry('aud_d', { feedback: { vote: 'down', note: 'see https://x.test/?api_key=SECRET123', at: 'x' } }),
+    entry('aud_r', { status: 'needs_review', total: 60, review_reasons: ['Total 60 is below 70'] }),
+    entry('aud_v', { total: 80, validation: { my_total: 50 } }),
+  ] };
+  const f = flaggedExport(doc, idx, 70, Date.UTC(2026, 10, 17));
+  assert.equal(f.filename, 'flagged-entries-2026-11-17.md');
+  assert.deepEqual(f.counts, { failed: 2, thumbs_down: 1, review: 1, mismatched: 1 });
+  assert.match(f.text, /Fetch article page: FAILED HTTP 404/);
+  assert.match(f.text, /1 retry, saved by the retry \(Bad JSON\)/);
+  assert.match(f.text, /auditor 80 vs mine 50/);
+  assert.ok(!f.text.includes('SECRET123'));
+  assert.match(f.text, /Please find the patterns/);
+});

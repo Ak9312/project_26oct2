@@ -20,7 +20,8 @@ export const INDEX = {
     "1 claim(s) contradicted by search results"
    ],
    "review": null,
-   "validation": null
+   "validation": null,
+   "feedback": null
   },
   {
    "audit_id": "aud_sample_desk",
@@ -37,7 +38,8 @@ export const INDEX = {
    "plagiarism": 10,
    "review_reasons": [],
    "review": null,
-   "validation": null
+   "validation": null,
+   "feedback": null
   },
   {
    "audit_id": "aud_sample_failed",
@@ -56,7 +58,8 @@ export const INDEX = {
     "Couldn't fetch https://blocked.example.com/guide (Request failed with status code 403). The site may block automated requests; paste the content instead."
    ],
    "review": null,
-   "validation": null
+   "validation": null,
+   "feedback": null
   }
  ]
 };

@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { ArrowLeft, ExternalLink, AlertTriangle, CheckCircle2, XCircle, Check, X, Minus, Printer, Flag, Loader2, Circle, RotateCw, Info, Activity } from 'lucide-react';
+import { ArrowLeft, ExternalLink, AlertTriangle, CheckCircle2, XCircle, Check, X, Minus, Printer, Flag, Loader2, Circle, RotateCw, Info, Activity, ThumbsUp, ThumbsDown } from 'lucide-react';
 import { toast } from 'sonner';
-import { Button, Card, CardHeader, CardTitle, CardDescription, CardContent, Badge, Tabs, TabsList, TabsTrigger, TabsContent, Input, Label, Table, THead, TBody, TR, TH, TD, Skeleton, Progress } from '@/components/ui';
+import { Button, Card, CardHeader, CardTitle, CardDescription, CardContent, Badge, Tabs, TabsList, TabsTrigger, TabsContent, Input, Label, Table, THead, TBody, TR, TH, TD, Skeleton, Progress, Textarea } from '@/components/ui';
 import { ErrorNote, useApp } from '@/components/layout';
 import { ScoreGauge, ScoreRadar, ParamBar } from '@/components/charts';
 import { StatusBadge } from '@/components/status';
@@ -316,6 +316,58 @@ function MyScores({ id, initial }) {
   );
 }
 
+// 👍 / 👎: "Was this audit right?" A 👎 sends the audit to the Review queue
+// and shows up on the Monitoring page.
+function Feedback({ id, initial, onSaved }) {
+  const [fb, setFb] = useState(initial || null);
+  const [vote, setVote] = useState(initial ? initial.vote : '');
+  const [note, setNote] = useState(initial && initial.note ? initial.note : '');
+  const [busy, setBusy] = useState(false);
+  const save = async (v, n) => {
+    setBusy(true);
+    try {
+      const r = await data('feedback_save', { audit_id: id, vote: v, note: n || '' });
+      setFb(r.feedback);
+      toast.success(v === 'down' ? 'Thanks. Sent to the Review queue.' : v === 'up' ? 'Thanks for the feedback.' : 'Feedback cleared.');
+      onSaved && onSaved();
+    } catch (e) {
+      toast.error(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const pick = (v) => {
+    if (fb && fb.vote === v) { setVote(''); setNote(''); save('', ''); return; }
+    setVote(v);
+    if (v === 'up') save('up', '');
+  };
+  const saved = fb && fb.vote;
+  return (
+    <Card className="no-print mt-4">
+      <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-start sm:gap-5 sm:p-5">
+        <div className="min-w-0 sm:w-64">
+          <div className="font-medium">Was this audit right?</div>
+          <p className="text-sm text-muted-foreground">Your rating feeds the Monitoring page. A 👎 goes to the Review queue.</p>
+        </div>
+        <div className="flex gap-2">
+          <Button variant={saved === 'up' ? 'default' : 'outline'} onClick={() => pick('up')} disabled={busy} aria-pressed={saved === 'up'}><ThumbsUp />Yes</Button>
+          <Button variant={saved === 'down' || vote === 'down' ? 'default' : 'outline'} onClick={() => pick('down')} disabled={busy} aria-pressed={saved === 'down'}><ThumbsDown />No</Button>
+        </div>
+        {vote === 'down' ? (
+          <div className="min-w-0 flex-1 space-y-2">
+            <Label htmlFor="fb-note">What was wrong? <span className="font-normal text-muted-foreground">(optional)</span></Label>
+            <Textarea id="fb-note" rows={2} className="min-h-16" maxLength={500} value={note} onChange={(e) => setNote(e.target.value)} placeholder="For example: the score is too low for a well-researched article" />
+            <div className="flex items-center gap-3">
+              <Button size="sm" onClick={() => save('down', note)} disabled={busy}>{saved === 'down' ? 'Update note' : 'Send 👎'}</Button>
+              {saved === 'down' ? <span className="text-xs text-muted-foreground">Saved {fmtDate(fb.at)} · in the Review queue</span> : null}
+            </div>
+          </div>
+        ) : saved === 'up' ? <p className="self-center text-sm text-good-ink">Saved {fmtDate(fb.at)}. Thank you.</p> : null}
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function ReportPage() {
   const { id } = useParams();
   const [state, setState] = useState({ kind: 'loading' });
@@ -423,6 +475,8 @@ export default function ReportPage() {
           </CardContent>
         </Card>
       </div>
+
+      <Feedback id={id} initial={state.r.feedback} onSaved={refreshPending} />
 
       {top.length ? <div className="mt-4"><TopFixes items={top} /></div> : null}
 

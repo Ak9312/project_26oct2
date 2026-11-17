@@ -23,6 +23,7 @@ export function summarize(report) {
     review_reasons: report.review_reasons || [],
     review: null,
     validation: null,
+    feedback: null,
   };
 }
 
@@ -33,7 +34,7 @@ function byNewest(a, b) {
 export function upsertEntry(index, entry) {
   const list = (index && Array.isArray(index.audits) ? index.audits : []).filter((e) => e.audit_id !== entry.audit_id);
   const old = (index && Array.isArray(index.audits) ? index.audits : []).find((e) => e.audit_id === entry.audit_id);
-  const merged = Object.assign({}, entry, old ? { review: old.review, validation: old.validation } : {});
+  const merged = Object.assign({}, entry, old ? { review: old.review, validation: old.validation, feedback: old.feedback || null } : {});
   list.push(merged);
   list.sort(byNewest);
   return { audits: list.slice(0, INDEX_LIMIT) };
@@ -43,11 +44,16 @@ function publicSummary(e) {
   const out = Object.assign({}, e);
   delete out.review;
   delete out.validation;
+  delete out.feedback;
   return out;
 }
 
+const thumbsDown = (e) => Boolean(e.feedback && e.feedback.vote === 'down');
+
+// A 👎 from a user sends the audit to the human review queue (rule → AI →
+// human: any thumbs down goes straight to a human).
 function needsReview(e) {
-  return e.status === 'needs_review' || e.status === 'error';
+  return e.status === 'needs_review' || e.status === 'error' || thumbsDown(e);
 }
 
 // Which audits a "clear history" request removes: every audit, only the ones
@@ -83,6 +89,7 @@ export function getResponse(index, record, auditId, passMark) {
     report: record.report,
     review: entry && entry.review ? entry.review : null,
     validation: entry && entry.validation ? entry.validation : null,
+    feedback: entry && entry.feedback ? entry.feedback : null,
     pass_mark: passMark,
   };
 }
@@ -96,7 +103,8 @@ export function reviewListResponse(index) {
       title: e.title,
       url: e.url,
       total: e.total,
-      review_reasons: e.review_reasons || [],
+      review_reasons: (e.review_reasons || []).concat(thumbsDown(e)
+        ? ['A user marked this audit 👎' + (e.feedback.note ? ': ' + e.feedback.note : '')] : []),
       reviewer_score: Number.isFinite(r.reviewer_score) ? r.reviewer_score : null,
       decision: r.decision || 'pending',
       notes: r.notes || '',
@@ -146,6 +154,18 @@ export function applyValidation(index, body) {
   v.my_total = v.my_accuracy + v.my_readability + v.my_keywords + v.my_sections + v.my_plagiarism;
   v.saved_at = new Date().toISOString();
   return { entry: Object.assign({}, e, { validation: v }), my_total: v.my_total };
+}
+
+// 👍 / 👎 on a report. vote: 'up', 'down', or '' to clear. A 👎 can carry a
+// short note ("what was wrong?").
+export function applyFeedback(index, body) {
+  const id = String((body && body.audit_id) || '');
+  const e = (index.audits || []).find((x) => x.audit_id === id);
+  if (!e) return { status: 404, response: { error: 'Unknown audit' } };
+  const vote = body.vote === 'up' || body.vote === 'down' ? body.vote : body.vote === '' || body.vote === null ? null : undefined;
+  if (vote === undefined) return { status: 400, response: { error: 'vote must be up, down or empty' } };
+  const feedback = vote ? { vote, note: vote === 'down' ? String(body.note || '').trim().slice(0, 500) : '', at: new Date().toISOString() } : null;
+  return { entry: Object.assign({}, e, { feedback }), feedback };
 }
 
 export function replaceEntry(index, entry) {
